@@ -19,8 +19,8 @@ class HybridRetriever:
     def retrieve(
         self,
         query: str,
-        top_k_seeds: int = 4,
-        k_hops: int = 1,
+        top_k_seeds: int = 5,
+        k_hops: int = 2,
         find_paths: bool = True
     ) -> Dict[str, Any]:
         """

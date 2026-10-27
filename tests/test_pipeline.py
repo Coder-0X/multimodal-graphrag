@@ -138,10 +138,35 @@ def test_langgraph_multi_hop_agent():
     assert "PostgreSQL" in res2["final_answer"]
 
 
+def test_hierarchical_community_engine():
+    pipeline = MultimodalGraphRAGPipeline(use_neo4j=False)
+    pipeline.ingest_documents()
+
+    assert pipeline.community_engine.is_built
+    assert len(pipeline.community_engine.communities) >= 2
+
+    # Global search query
+    res = pipeline.global_query("Summarize overall system risks across infrastructure and the balance sheet")
+    assert res["mode"] == "GLOBAL_SEARCH"
+    assert "Macro Community Landscape" in res["final_answer"]
+    assert len(res["citations"]) > 0
+
+
+def test_benchmark_runner():
+    from src.evaluation.benchmark import BenchmarkRunner, BENCHMARK_CASES
+    runner = BenchmarkRunner()
+    case_res = runner.evaluate_case(BENCHMARK_CASES[0])
+
+    assert case_res["graph_rag"]["completeness"] >= case_res["standard_rag"]["completeness"]
+    assert case_res["graph_rag"]["cross_modal_captured"] is True
+
+
 if __name__ == "__main__":
     test_financial_table_extractor()
     test_architecture_diagram_extractor()
     test_networkx_graph_store()
     test_hybrid_retriever()
     test_langgraph_multi_hop_agent()
-    print("All 5 test suites passed successfully!")
+    test_hierarchical_community_engine()
+    test_benchmark_runner()
+    print("All 7 test suites passed successfully!")

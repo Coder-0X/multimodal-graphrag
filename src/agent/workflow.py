@@ -86,8 +86,8 @@ class GraphRAGAgent:
 
         retrieval_res = self.retriever.retrieve(
             query=query,
-            top_k_seeds=4,
-            k_hops=1,
+            top_k_seeds=5,
+            k_hops=2,
             find_paths=True
         )
 
@@ -116,18 +116,30 @@ class GraphRAGAgent:
 
         # Stopping criteria:
         # 1. We reached max_hops
-        # 2. For cross-modal/dependency queries, we have at least one bridging path or sufficient relations
+        # 2. For cross-modal queries, we have active bridging paths connecting both domains
+        # 3. For path tracing, we have reached the terminal storage tier or max_hops
         is_sufficient = False
         if hop_count >= max_hops:
             is_sufficient = True
             reasoning.append(f"Maximum hop budget ({max_hops}) reached. Proceeding to synthesis.")
-        elif intent in ("CROSS_MODAL_FINANCIAL_INFRASTRUCTURE", "ARCHITECTURE_DEPENDENCY_TRACING"):
-            if bridging_paths or len(relations) >= 8:
+        elif intent == "CROSS_MODAL_FINANCIAL_INFRASTRUCTURE":
+            if bridging_paths:
                 is_sufficient = True
-                reasoning.append("Sufficient cross-domain and multi-hop paths resolved.")
+                reasoning.append(f"Resolved {len(bridging_paths)} cross-modal bridging paths connecting financial obligations to infrastructure.")
             else:
-                reasoning.append(f"Current graph neighborhood has {len(relations)} relations, expanding 1 more hop...")
-        elif len(relations) >= 5:
+                reasoning.append(f"No bridging path found yet at hop {hop_count + 1}; expanding neighborhood...")
+        elif intent == "ARCHITECTURE_DEPENDENCY_TRACING":
+            # Check if any storage tier or terminal DB node is reached
+            has_db = any(
+                "postgres" in e.get("id", "").lower() or "storage" in e.get("properties", {}).get("zone", "").lower()
+                for e in state["retrieved_subgraph_entities"]
+            )
+            if has_db and (bridging_paths or hop_count >= 1):
+                is_sufficient = True
+                reasoning.append("Multi-hop topology trace successfully reached the stateful storage tier.")
+            else:
+                reasoning.append(f"Tracing downstream path towards storage tier (currently at hop {hop_count + 1})...")
+        elif len(relations) >= 8:
             is_sufficient = True
             reasoning.append("Sufficient domain entities retrieved.")
         else:

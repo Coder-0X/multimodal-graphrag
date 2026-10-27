@@ -15,7 +15,12 @@ from .parser import (
     KGEntity,
     KGRelation,
 )
-from .graph import NetworkXGraphStore, Neo4jGraphStore, BaseGraphStore
+from .graph import (
+    NetworkXGraphStore,
+    Neo4jGraphStore,
+    BaseGraphStore,
+    HierarchicalCommunityEngine
+)
 from .retrieval import SimpleDenseVectorStore, HybridRetriever
 from .agent import GraphRAGAgent
 
@@ -27,6 +32,7 @@ class MultimodalGraphRAGPipeline:
         self.parser = MultimodalVisionParser()
         self.nx_store = NetworkXGraphStore()
         self.vector_store = SimpleDenseVectorStore()
+        self.community_engine = HierarchicalCommunityEngine(graph_store=self.nx_store)
         
         # Dual-engine support
         self.use_neo4j = use_neo4j
@@ -82,8 +88,8 @@ class MultimodalGraphRAGPipeline:
         if self.use_neo4j and self.neo4j_store and self.neo4j_store.is_connected:
             self.neo4j_store.sync_from_networkx(self.nx_store)
 
-        # 7. Compute Graph Analytics
-        communities = self.nx_store.detect_communities()
+        # 7. Compute Graph Analytics & Build Hierarchical Communities
+        communities = self.community_engine.build_communities()
         centrality = self.nx_store.calculate_centrality()
 
         # Sort top components by PageRank
@@ -96,6 +102,7 @@ class MultimodalGraphRAGPipeline:
             "financial_metrics_count": len([e for e in f_entities if e.entity_type == "FINANCIAL_METRIC"]),
             "architecture_components_count": len([e for e in a_entities if e.entity_type == "SYSTEM_COMPONENT"]),
             "communities_detected": len(communities),
+            "community_summaries": {cid: comm.title for cid, comm in communities.items()},
             "top_central_entities": [(self.nx_store.get_entity(nid).name if self.nx_store.get_entity(nid) else nid, round(score, 4)) for nid, score in top_hubs],
             "computed_financial_ratios": self.statement.computed_metrics
         }
@@ -140,6 +147,25 @@ class MultimodalGraphRAGPipeline:
 
         return cross_links
 
-    def query(self, user_question: str, max_hops: int = 2) -> Dict[str, Any]:
-        """Execute a multi-hop reasoning query using the LangGraph agent."""
+    def query(self, user_question: str, max_hops: int = 2, search_mode: str = "auto") -> Dict[str, Any]:
+        """
+        Execute a query using either:
+        - 'local': Multi-hop LangGraph traversal starting from dense vector seed anchors.
+        - 'global': Microsoft GraphRAG-style synthesis across hierarchical community summaries.
+        - 'auto': Automatically routes to global search for macro/thematic questions, else local search.
+        """
+        q_lower = user_question.lower()
+        is_global = search_mode == "global" or (
+            search_mode == "auto" and any(
+                w in q_lower for w in ["macro", "systemic", "holistic", "overview", "all communities", "thematic", "overall posture"]
+            )
+        )
+
+        if is_global:
+            return self.community_engine.global_search(user_question)
+        
         return self.agent.run(query=user_question, max_hops=max_hops)
+
+    def global_query(self, user_question: str) -> Dict[str, Any]:
+        """Directly query the global community summarization engine."""
+        return self.community_engine.global_search(user_question)
