@@ -161,6 +161,18 @@ def test_benchmark_runner():
     assert case_res["graph_rag"]["cross_modal_captured"] is True
 
 
+def test_apple_showcase_ingestion():
+    pipeline = MultimodalGraphRAGPipeline(use_neo4j=False)
+    pipeline.ingest_documents()
+    initial_count = len(pipeline.nx_store._entities)
+
+    stats = pipeline.ingest_apple_showcase()
+    assert len(pipeline.nx_store._entities) > initial_count
+    assert "Apple Inc" in [e.name for e in pipeline.nx_store._entities.values()]
+    assert pipeline.statement.company_name == "Apple Inc"
+    assert "current_ratio" in pipeline.statement.computed_metrics
+
+
 if __name__ == "__main__":
     test_financial_table_extractor()
     test_architecture_diagram_extractor()
@@ -169,4 +181,5 @@ if __name__ == "__main__":
     test_langgraph_multi_hop_agent()
     test_hierarchical_community_engine()
     test_benchmark_runner()
-    print("All 7 test suites passed successfully!")
+    test_apple_showcase_ingestion()
+    print("All 8 test suites passed successfully!")

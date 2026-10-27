@@ -107,6 +107,53 @@ class MultimodalGraphRAGPipeline:
             "computed_financial_ratios": self.statement.computed_metrics
         }
 
+    def ingest_apple_showcase(self) -> Dict[str, Any]:
+        """Ingest Apple Inc. FY2024 Form 10-K and Private Cloud Compute Architecture."""
+        data = MultimodalVisionParser.load_apple_inc_showcase()
+        return self.ingest_custom_data(statement=data["statement"], topology=data["topology"])
+
+    def ingest_custom_data(
+        self,
+        statement: Optional[FinancialStatement] = None,
+        topology: Optional[ArchitectureTopology] = None
+    ) -> Dict[str, Any]:
+        """Ingest custom or user-uploaded financial statements and architectural topologies."""
+        if statement:
+            self.statement = statement
+            f_entities, f_relations = FinancialTableExtractor.to_knowledge_graph(self.statement)
+            for ent in f_entities:
+                self.nx_store.add_entity(ent)
+                self.vector_store.add_entity(ent)
+            for rel in f_relations:
+                self.nx_store.add_relation(rel)
+
+        if topology:
+            self.topology = topology
+            a_entities, a_relations = ArchitectureDiagramExtractor.to_knowledge_graph(self.topology)
+            for ent in a_entities:
+                self.nx_store.add_entity(ent)
+                self.vector_store.add_entity(ent)
+            for rel in a_relations:
+                self.nx_store.add_relation(rel)
+
+        # Re-link and rebuild communities
+        cross_relations = self._create_cross_modal_links()
+        for rel in cross_relations:
+            self.nx_store.add_relation(rel)
+
+        communities = self.community_engine.build_communities()
+        centrality = self.nx_store.calculate_centrality()
+        top_hubs = sorted(centrality.items(), key=lambda x: x[1], reverse=True)[:5]
+
+        return {
+            "total_entities": len(self.nx_store._entities),
+            "total_relations": len(self.nx_store._relations),
+            "cross_modal_relations": len(cross_relations),
+            "communities_detected": len(communities),
+            "top_central_entities": [(self.nx_store.get_entity(nid).name if self.nx_store.get_entity(nid) else nid, round(score, 4)) for nid, score in top_hubs],
+            "computed_financial_ratios": self.statement.computed_metrics if self.statement else {}
+        }
+
     def _create_cross_modal_links(self) -> list[KGRelation]:
         """
         Synthesize cross-modal relationships connecting financial balance sheet line items
