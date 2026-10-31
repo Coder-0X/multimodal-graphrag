@@ -11,6 +11,144 @@ from .schemas import FinancialStatement, LineItem, KGEntity, KGRelation
 class FinancialTableExtractor:
     """Extracts, normalizes, and computes financial metrics from balance sheets and tables."""
 
+    @classmethod
+    def extract_from_text(
+        cls,
+        raw_text: str,
+        company_name: str = "Extracted Entity",
+        period: str = "FY2025"
+    ) -> FinancialStatement:
+        """
+        Parses raw text, markdown tables, or PDF extractions into a normalized FinancialStatement.
+        Dynamically extracts line items, monetary values, scales, and categories.
+        """
+        lines = [line.strip() for line in raw_text.splitlines() if line.strip()]
+        line_items: List[LineItem] = []
+        current_category = "General Assets"
+        scale = "thousands" if "thousand" in raw_text.lower() else ("millions" if "million" in raw_text.lower() else "units")
+        currency = "USD"
+        if "$" in raw_text or "USD" in raw_text:
+            currency = "USD"
+        elif "€" in raw_text or "EUR" in raw_text:
+            currency = "EUR"
+        elif "£" in raw_text or "GBP" in raw_text:
+            currency = "GBP"
+
+        for line in lines:
+            line_clean = line.strip()
+            if not line_clean:
+                continue
+            line_lower = line_clean.lower()
+
+            # Skip table delimiter rows (e.g. |:---|---:| or --------)
+            if re.match(r'^[:|\-\s]+$', line_clean):
+                continue
+
+            # Detect category headings
+            if any(h in line_lower for h in ["current assets", "assets", "liabilities and stockholders", "current liabilities", "non-current", "equity"]):
+                if "current asset" in line_lower and "total" not in line_lower:
+                    current_category = "Current Assets"
+                elif ("non-current asset" in line_lower or "property" in line_lower) and "total" not in line_lower:
+                    current_category = "Non-Current Assets"
+                elif "current liabilit" in line_lower and "total" not in line_lower:
+                    current_category = "Current Liabilities"
+                elif ("non-current liabilit" in line_lower or "long-term debt" in line_lower) and "total" not in line_lower:
+                    current_category = "Non-Current Liabilities"
+                elif ("equity" in line_lower or "stockholder" in line_lower or "shareholder" in line_lower) and "total" not in line_lower:
+                    current_category = "Stockholders Equity"
+                elif "total asset" in line_lower and not any(char.isdigit() for char in line_clean):
+                    current_category = "Total Assets"
+                elif "total liabilit" in line_lower and not any(char.isdigit() for char in line_clean):
+                    current_category = "Total Liabilities"
+
+            # Parse line item name and numeric value
+            raw_name: Optional[str] = None
+            val: Optional[float] = None
+
+            if '|' in line_clean:
+                cells = [c.strip() for c in line_clean.split('|') if c.strip()]
+                if len(cells) >= 2:
+                    potential_name = cells[0]
+                    # Check that first cell isn't a table header title
+                    if not any(hdr in potential_name.lower() for hdr in ["balance sheet", "statement of", "as of", "consolidated", "item", "description"]):
+                        for candidate_cell in reversed(cells[1:]):
+                            num_m = re.search(r'\(?([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]+)?|[0-9]+(?:\.[0-9]+)?)\)?', candidate_cell)
+                            if num_m:
+                                # Ensure candidate_cell is not a year header like "2025" without currency if preceded by month
+                                if re.search(r'\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\b', candidate_cell, re.I):
+                                    continue
+                                num_str = num_m.group(1).replace(',', '')
+                                try:
+                                    val = float(num_str)
+                                    if '(' in candidate_cell and ')' in candidate_cell:
+                                        val = -val
+                                    raw_name = potential_name
+                                    break
+                                except ValueError:
+                                    pass
+            else:
+                # Colon or dot/space delimited: e.g. "Cash and equivalents: $5,000,000" or "Total Assets ... 10,000"
+                parts = re.split(r'[:\t]|\.{2,}', line_clean)
+                if len(parts) >= 2:
+                    potential_name = parts[0].strip()
+                    if not any(hdr in potential_name.lower() for hdr in ["balance sheet", "statement of", "as of"]):
+                        num_m = re.search(r'\(?([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]+)?|[0-9]+(?:\.[0-9]+)?)\)?', parts[-1])
+                        if num_m:
+                            num_str = num_m.group(1).replace(',', '')
+                            try:
+                                val = float(num_str)
+                                if '(' in parts[-1] and ')' in parts[-1]:
+                                    val = -val
+                                raw_name = potential_name
+                            except ValueError:
+                                pass
+                else:
+                    # Fallback regex for unstructured lines: "Cash and cash equivalents $5,000,000"
+                    m = re.search(r'^([A-Za-z0-9\s,\'&\-\(\)\/]+?)\s+[\$€£]?\(?([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]+)?|[0-9]+(?:\.[0-9]+)?)\)?$', line_clean)
+                    if m and not any(hdr in m.group(1).lower() for hdr in ["balance sheet", "statement of", "as of"]):
+                        try:
+                            val = float(m.group(2).replace(',', ''))
+                            if '(' in line_clean and ')' in line_clean:
+                                val = -val
+                            raw_name = m.group(1).strip()
+                        except ValueError:
+                            pass
+
+            if raw_name and val is not None:
+                # Refine category for explicit totals
+                cat = current_category
+                raw_name_lower = raw_name.lower()
+                if "total current asset" in raw_name_lower:
+                    cat = "Current Assets"
+                elif "total current liabilit" in raw_name_lower:
+                    cat = "Current Liabilities"
+                elif "total asset" in raw_name_lower:
+                    cat = "Total Assets"
+                elif "total liabilit" in raw_name_lower:
+                    cat = "Total Liabilities"
+                elif "total stockholder" in raw_name_lower or "total equity" in raw_name_lower:
+                    cat = "Stockholders Equity"
+
+                line_items.append(LineItem(
+                    name=raw_name,
+                    value=val,
+                    currency=currency,
+                    scale=scale,
+                    category=cat
+                ))
+
+        statement = FinancialStatement(
+            statement_type="balance_sheet",
+            company_name=company_name,
+            reporting_period=period,
+            currency=currency,
+            scale=scale,
+            line_items=line_items,
+            raw_markdown=raw_text
+        )
+        cls.compute_ratios(statement)
+        return statement
+
     @staticmethod
     def compute_ratios(statement: FinancialStatement) -> Dict[str, float]:
         """Compute key liquidity and leverage ratios from balance sheet line items."""

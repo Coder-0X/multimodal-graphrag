@@ -173,6 +173,72 @@ def test_apple_showcase_ingestion():
     assert "current_ratio" in pipeline.statement.computed_metrics
 
 
+def test_dynamic_table_text_parser():
+    raw_table = """
+    | Consolidated Balance Sheet | Dec 31, 2025 |
+    | Cash and cash equivalents | $5,000,000 |
+    | Accounts receivable | $2,500,000 |
+    | Total current assets | $10,000,000 |
+    | Accounts payable | $2,000,000 |
+    | Total current liabilities | $4,000,000 |
+    | Total liabilities | $6,000,000 |
+    | Total equity | $8,000,000 |
+    """
+    stmt = FinancialTableExtractor.extract_from_text(raw_table, company_name="Acme Corp", period="Q4 2025")
+    assert stmt.company_name == "Acme Corp"
+    assert len(stmt.line_items) >= 5
+    assert stmt.computed_metrics["current_ratio"] == 2.5
+    assert stmt.computed_metrics["quick_ratio"] == 1.875
+
+
+def test_dynamic_diagram_text_parser():
+    mermaid_text = """
+    flowchart TD
+        subgraph "Ingress Perimeter"
+            client[Web Browser Client] -->|HTTPS| gateway[Kong API Gateway]
+        end
+        subgraph "Core App"
+            gateway -->|gRPC| auth_svc[Auth Token Service]
+            gateway -->|gRPC| order_svc[Order Processing Service]
+        end
+        subgraph "Storage Tier"
+            order_svc -->|TCP| db[(PostgreSQL Cluster)]
+        end
+    """
+    topo = ArchitectureDiagramExtractor.extract_from_text(mermaid_text, system_name="E-Commerce Architecture")
+    assert topo.system_name == "E-Commerce Architecture"
+    assert len(topo.nodes) >= 5
+    assert len(topo.edges) >= 4
+    node_names = [n.name for n in topo.nodes]
+    assert "Web Browser Client" in node_names
+    assert "Kong API Gateway" in node_names
+    assert "PostgreSQL Cluster" in node_names
+
+
+def test_dense_vector_store():
+    from src.retrieval.vector_store import DenseVectorStore
+    store = DenseVectorStore()
+    assert store.is_dense is True
+    embs = store.embed_texts(["Cloud computing architecture", "Corporate finance liabilities"])
+    assert embs.shape == (2, 384)
+    sim = store.compute_similarity("Cloud payment processing", "AWS compute agreements")
+    assert sim > 0.3
+
+
+def test_semantic_cross_modal_linker():
+    from src.graph.entity_resolution import SemanticCrossModalLinker
+    from src.retrieval.vector_store import DenseVectorStore
+    v_store = DenseVectorStore()
+    linker = SemanticCrossModalLinker(vector_store=v_store, similarity_threshold=0.45)
+    
+    pipeline = MultimodalGraphRAGPipeline(use_neo4j=False)
+    pipeline.ingest_documents()
+    links = linker.discover_cross_modal_links(list(pipeline.nx_store._entities.values()))
+    assert len(links) > 0
+    rel_types = {l.relation_type for l in links}
+    assert any("FUNDS" in t or "HOSTS" in t or "ASSOCIATED" in t for t in rel_types)
+
+
 if __name__ == "__main__":
     test_financial_table_extractor()
     test_architecture_diagram_extractor()
@@ -182,4 +248,8 @@ if __name__ == "__main__":
     test_hierarchical_community_engine()
     test_benchmark_runner()
     test_apple_showcase_ingestion()
-    print("All 8 test suites passed successfully!")
+    test_dynamic_table_text_parser()
+    test_dynamic_diagram_text_parser()
+    test_dense_vector_store()
+    test_semantic_cross_modal_linker()
+    print("All 12 test suites passed successfully!")

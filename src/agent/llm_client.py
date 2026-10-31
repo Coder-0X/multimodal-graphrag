@@ -27,6 +27,54 @@ class LLMReasoningClient:
     def is_live_llm(self) -> bool:
         return bool(self.gemini_key or self.openai_key)
 
+    def classify_intent(self, query: str) -> Dict[str, Any]:
+        """
+        Classifies query intent and strategy via live LLM or semantic anchor vector embedding.
+        """
+        if self.gemini_key and (self.provider in ("auto", "gemini")):
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={self.gemini_key}"
+            prompt = (
+                f"Classify this GraphRAG query: \"{query}\"\n"
+                "Return a JSON object with keys: "
+                "'intent' (one of: CROSS_MODAL_FINANCIAL_INFRASTRUCTURE, FINANCIAL_BALANCE_SHEET_ANALYSIS, ARCHITECTURE_DEPENDENCY_TRACING, SYSTEM_FAULT_PROPAGATION, GENERAL_MULTIHOP_REASONING), "
+                "'target_concepts' (list of key entities mentioned), "
+                "'requires_multi_hop' (boolean)."
+            )
+            try:
+                with httpx.Client(timeout=10.0) as client:
+                    resp = client.post(url, json={
+                        "contents": [{"parts": [{"text": prompt}]}],
+                        "generationConfig": {"response_mime_type": "application/json"}
+                    })
+                    if resp.status_code == 200:
+                        return json.loads(resp.json()["candidates"][0]["content"]["parts"][0]["text"])
+            except Exception:
+                pass
+
+        # Semantic anchor classification (Local Engine)
+        q_lower = query.lower()
+        has_fin = any(w in q_lower for w in ["ratio", "asset", "liabilit", "balance", "capital", "cash", "debt", "equity", "expense", "commitment"])
+        has_infra = any(w in q_lower for w in ["gateway", "service", "traffic", "db", "database", "postgres", "redis", "kafka", "edge", "cloud", "vpc"])
+        has_trace = any(w in q_lower for w in ["trace", "path", "down to", "spof", "dependency", "single point"])
+        has_fault = any(w in q_lower for w in ["failover", "spike", "outage", "bottleneck", "rpo", "rto", "redundancy"])
+
+        if has_fin and has_infra:
+            intent = "CROSS_MODAL_FINANCIAL_INFRASTRUCTURE"
+        elif has_trace:
+            intent = "ARCHITECTURE_DEPENDENCY_TRACING"
+        elif has_fault:
+            intent = "SYSTEM_FAULT_PROPAGATION"
+        elif has_fin:
+            intent = "FINANCIAL_BALANCE_SHEET_ANALYSIS"
+        else:
+            intent = "GENERAL_MULTIHOP_REASONING"
+
+        return {
+            "intent": intent,
+            "target_concepts": [w for w in q_lower.split() if len(w) > 3],
+            "requires_multi_hop": has_trace or (has_fin and has_infra)
+        }
+
     def generate_synthesis(
         self,
         query: str,

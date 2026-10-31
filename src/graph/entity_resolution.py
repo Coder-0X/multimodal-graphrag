@@ -17,7 +17,7 @@ class SemanticCrossModalLinker:
     and physical cloud infrastructure components (microservices, databases, gateways).
     """
 
-    def __init__(self, vector_store: DenseVectorStore, similarity_threshold: float = 0.52):
+    def __init__(self, vector_store: DenseVectorStore, similarity_threshold: float = 0.48):
         self.vector_store = vector_store
         self.similarity_threshold = similarity_threshold
 
@@ -62,32 +62,19 @@ class SemanticCrossModalLinker:
         discovered_relations: List[KGRelation] = []
         seen_pairs = set()
 
+        # Pure semantic vector similarity linking via ONNX cosine similarity
         for f_idx, fe in enumerate(financial_entities):
             for i_idx, ie in enumerate(infra_entities):
                 sim = float(sim_matrix[f_idx, i_idx])
                 
-                # Check semantic alignment threshold or keyword reinforcement
-                is_high_sim = sim >= self.similarity_threshold
-                
-                f_str = fin_texts[f_idx].lower()
-                i_str = infra_texts[i_idx].lower()
-                
-                # Reinforce specific infrastructural connections
-                has_cloud_link = (
-                    ("compute" in f_str and "compute" in i_str) or
-                    ("aws" in f_str and ("aws" in i_str or "orchestrat" in i_str)) or
-                    ("cloudflare" in f_str and "cloudflare" in i_str) or
-                    ("lease" in f_str and ("storage" in i_str or "database" in i_str or "datastore" in i_str or "postgres" in i_str)) or
-                    ("pay" in f_str and "pay" in i_str)
-                )
-
-                if (is_high_sim or has_cloud_link) and sim >= 0.40:
+                # Dynamic semantic thresholding (no hardcoded keyword checks)
+                if sim >= self.similarity_threshold:
                     pair_key = (fe.id, ie.id)
                     if pair_key in seen_pairs:
                         continue
                     seen_pairs.add(pair_key)
 
-                    # Infer relation type from domain semantics
+                    # Infer relation type from ontological domain properties
                     rel_type, desc = self._infer_relation_type(fe, ie, sim)
 
                     discovered_relations.append(KGRelation(
@@ -96,7 +83,7 @@ class SemanticCrossModalLinker:
                         relation_type=rel_type,
                         weight=round(sim * 2.0, 2),
                         description=desc,
-                        evidence_snippet=f"Discovered via semantic resolution (cosine similarity: {sim:.3f})"
+                        evidence_snippet=f"Discovered via dense ONNX semantic resolution (cosine similarity: {sim:.3f})"
                     ))
 
         return discovered_relations

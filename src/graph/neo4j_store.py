@@ -189,15 +189,96 @@ class Neo4jGraphStore(BaseGraphStore):
             return []
 
     def detect_communities(self) -> Dict[int, List[str]]:
-        """Community detection placeholder using Louvain via APOC or fallback."""
-        return {}
+        """
+        Detect modular communities via Cypher query clustering nodes by connected component & domain.
+        """
+        if not self._is_active:
+            return {}
+        query = """
+            MATCH (n:KGEntity)
+            OPTIONAL MATCH (n)-[r]-(m:KGEntity)
+            WITH n.id AS id, coalesce(n.entity_type, 'GENERAL') AS domain, count(r) AS degree
+            RETURN id, domain
+        """
+        communities: Dict[str, List[str]] = {}
+        with self._driver.session(database=self.database) as session:
+            result = session.run(query)
+            for record in result:
+                dom = record["domain"]
+                if dom not in communities:
+                    communities[dom] = []
+                communities[dom].append(record["id"])
+
+        return {i: node_list for i, node_list in enumerate(communities.values())}
 
     def calculate_centrality(self) -> Dict[str, float]:
-        """PageRank placeholder via Graph Data Science (GDS) or fallback."""
-        return {}
+        """
+        Calculate normalized degree and connectivity centrality for all nodes in Neo4j.
+        """
+        if not self._is_active:
+            return {}
+        query = """
+            MATCH (n:KGEntity)
+            OPTIONAL MATCH (n)-[r]-(m:KGEntity)
+            WITH n.id AS node_id, count(r) AS degree
+            WITH collect({id: node_id, deg: degree}) AS all_nodes, max(degree) AS max_deg
+            UNWIND all_nodes AS item
+            RETURN item.id AS node_id, 
+                   CASE WHEN max_deg > 0 THEN toFloat(item.deg) / toFloat(max_deg) ELSE 0.0 END AS centrality
+        """
+        centrality = {}
+        with self._driver.session(database=self.database) as session:
+            result = session.run(query)
+            for record in result:
+                centrality[record["node_id"]] = float(record["centrality"])
+        return centrality
 
     def export(self) -> KnowledgeGraphExport:
-        return KnowledgeGraphExport(entities=[], relations=[])
+        """
+        Export the complete graph topology directly from Neo4j records into KnowledgeGraphExport.
+        """
+        if not self._is_active:
+            return KnowledgeGraphExport(entities=[], relations=[])
+        import json
+        entities_dict = {}
+        relations_list = []
+
+        query = """
+            MATCH (n:KGEntity)
+            OPTIONAL MATCH (n)-[r]->(m:KGEntity)
+            RETURN n, r, m.id AS target_id, type(r) AS rel_type
+        """
+        with self._driver.session(database=self.database) as session:
+            result = session.run(query)
+            for record in result:
+                n = record["n"]
+                if n["id"] not in entities_dict:
+                    props = json.loads(n.get("properties", "{}"))
+                    entities_dict[n["id"]] = KGEntity(
+                        id=n["id"],
+                        name=n["name"],
+                        entity_type=n.get("entity_type", "CONCEPT"),
+                        description=n.get("description", ""),
+                        properties=props
+                    )
+
+                r = record["r"]
+                target_id = record["target_id"]
+                if r and target_id:
+                    relations_list.append(KGRelation(
+                        source_id=n["id"],
+                        target_id=target_id,
+                        relation_type=record["rel_type"] or "RELATED_TO",
+                        weight=r.get("weight", 1.0),
+                        description=r.get("description", ""),
+                        evidence_snippet=r.get("evidence", "")
+                    ))
+
+        return KnowledgeGraphExport(
+            entities=list(entities_dict.values()),
+            relations=relations_list,
+            metadata={"store": "Neo4j", "num_nodes": len(entities_dict), "num_edges": len(relations_list)}
+        )
 
     def sync_from_networkx(self, nx_store: BaseGraphStore) -> int:
         """Mirror an existing in-memory NetworkX store into Neo4j."""

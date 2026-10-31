@@ -50,8 +50,9 @@ class CommunitySummary:
 class HierarchicalCommunityEngine:
     """Manages community detection, summary generation, and global search routing."""
 
-    def __init__(self, graph_store: BaseGraphStore):
+    def __init__(self, graph_store: BaseGraphStore, llm_client: Any = None):
         self.graph_store = graph_store
+        self.llm_client = llm_client
         self.communities: Dict[int, CommunitySummary] = {}
         self.is_built = False
 
@@ -140,6 +141,25 @@ class HierarchicalCommunityEngine:
             lines.append(f"##### {comm.title}")
             lines.append(comm.summary_text)
             lines.append("")
+
+        # If live LLM is configured, request live synthesis over community summaries
+        if self.llm_client and self.llm_client.is_live_llm:
+            comm_context = "\n\n".join(f"Community {c.community_id} ({c.title}):\n{c.summary_text}" for _, c in matched_summaries)
+            live_res = self.llm_client.generate_synthesis(
+                query=query,
+                intent="GLOBAL_COMMUNITY_SEARCH",
+                entities=[],
+                relations=[],
+                paths=[],
+                evidence_text=f"Hierarchical Leiden Communities:\n{comm_context}"
+            )
+            return {
+                "query": query,
+                "mode": "GLOBAL_SEARCH",
+                "communities_count": len(self.communities),
+                "final_answer": live_res["answer"],
+                "citations": [f"Community {c.community_id}: {c.title}" for _, c in matched_summaries]
+            }
 
         lines.append("#### Cross-Cutting Synthesis & Strategic Assessment:")
         

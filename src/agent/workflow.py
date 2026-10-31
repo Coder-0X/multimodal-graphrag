@@ -56,23 +56,15 @@ class GraphRAGAgent:
     # -----------------------------------------------------------------------
 
     def _analyze_query(self, state: AgentState) -> Dict[str, Any]:
-        """Analyze query intent, target domains, and multi-hop complexity."""
-        q = state["query"].lower()
+        """Analyze query intent, target domains, and multi-hop complexity via LLMReasoningClient."""
+        query = state["query"]
         reasoning = list(state.get("intermediate_reasoning", []))
 
-        if any(term in q for term in ["ratio", "balance sheet", "assets", "liabilities", "working capital"]):
-            if any(term in q for term in ["gateway", "service", "traffic", "infrastructure", "component", "cloud"]):
-                intent = "CROSS_MODAL_FINANCIAL_INFRASTRUCTURE"
-            else:
-                intent = "FINANCIAL_BALANCE_SHEET_ANALYSIS"
-        elif any(term in q for term in ["trace", "path", "down to", "single point of failure", "spof", "dependency"]):
-            intent = "ARCHITECTURE_DEPENDENCY_TRACING"
-        elif any(term in q for term in ["failover", "spike", "outage", "bottleneck", "protocol"]):
-            intent = "SYSTEM_FAULT_PROPAGATION"
-        else:
-            intent = "GENERAL_MULTIHOP_REASONING"
+        analysis = self.llm_client.classify_intent(query)
+        intent = analysis.get("intent", "GENERAL_MULTIHOP_REASONING")
+        target_concepts = analysis.get("target_concepts", [])
 
-        reasoning.append(f"Query classified as: [{intent}]")
+        reasoning.append(f"Query classified as: [{intent}] (Target concepts: {target_concepts[:4]})")
         return {
             "intent": intent,
             "intermediate_reasoning": reasoning,

@@ -33,9 +33,8 @@ class MultimodalGraphRAGPipeline:
         self.parser = MultimodalVisionParser()
         self.nx_store = NetworkXGraphStore()
         self.vector_store = DenseVectorStore()
-        self.community_engine = HierarchicalCommunityEngine(graph_store=self.nx_store)
         self.cross_modal_linker = SemanticCrossModalLinker(vector_store=self.vector_store)
-        
+
         # Dual-engine support
         self.use_neo4j = use_neo4j
         self.neo4j_store: Optional[Neo4jGraphStore] = None
@@ -52,6 +51,10 @@ class MultimodalGraphRAGPipeline:
         self.agent = GraphRAGAgent(
             retriever=self.retriever,
             graph_store=self.graph_store
+        )
+        self.community_engine = HierarchicalCommunityEngine(
+            graph_store=self.nx_store,
+            llm_client=self.agent.llm_client
         )
 
         self.statement: Optional[FinancialStatement] = None
