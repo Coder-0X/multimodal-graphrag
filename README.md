@@ -77,8 +77,14 @@ Complex Documents (10-K, Diagrams)
 
 ```text
 multimodal-graphrag/
+├── data/                       # Authentic benchmark enterprise documents
+│   ├── novacloud_fy2025_10k.md # Form 10-K Consolidated Balance Sheet with footnotes
+│   ├── novacloud_payment_arch.mmd # Cloud payment platform Mermaid architecture
+│   ├── apple_fy2024_10k.md     # Apple Inc. Form 10-K Balance Sheet
+│   └── apple_pcc_arch.mmd      # Apple Private Cloud Compute Mermaid architecture
 ├── docker-compose.yml          # Production Neo4j + APOC stack
 ├── requirements.txt            # Frozen dependency list
+├── LICENSE                     # Apache 2.0 open-source license
 ├── app.py                      # Interactive Streamlit + PyVis Visual Explorer
 ├── demo.py                     # Rich interactive CLI demo
 ├── README.md                   # System documentation
@@ -87,7 +93,7 @@ multimodal-graphrag/
 │   │   ├── schemas.py          # Pydantic schemas (Statements, Topologies, KG)
 │   │   ├── table_extractor.py  # Financial table parser & ratio engine
 │   │   ├── diagram_extractor.py# Architecture diagram topology parser
-│   │   └── vision_parser.py    # Multimodal parser & sample datasets
+│   │   └── vision_parser.py    # Lean file parser & Gemini multimodal vision client
 │   ├── graph/
 │   │   ├── base.py             # Abstract BaseGraphStore interface
 │   │   ├── networkx_store.py   # In-memory graph engine (PageRank, Louvain)
@@ -104,7 +110,7 @@ multimodal-graphrag/
 │   │   └── workflow.py         # Stateful multi-hop reasoning state machine
 │   ├── evaluation/
 │   │   └── benchmark.py        # Empirical comparison suite (Vector vs GraphRAG)
-│   └── pipeline.py             # Unified end-to-end orchestrator
+│   └── pipeline.py             # Unified end-to-end orchestrator & CLI entrypoint
 └── tests/
     └── test_pipeline.py        # Automated 12-suite comprehensive test pipeline
 ```
@@ -130,13 +136,21 @@ streamlit run app.py
 ```
 Open `http://localhost:8501` to explore the 2D physics network, inspect highlighted traversal paths, and query local vs. global graph search.
 
-### 3. Run the Head-to-Head Empirical Benchmark
+### 3. Run the CLI Ingestion & Query Engine
+
+Ingest any Form 10-K and Mermaid architecture diagram and run multi-hop reasoning directly from the command line:
+
+```bash
+python -m src.pipeline --statement data/novacloud_fy2025_10k.md --topology data/novacloud_payment_arch.mmd --query "If AWS hosting liabilities spike, which microservices are involved?"
+```
+
+### 4. Run the Head-to-Head Empirical Benchmark
 
 ```bash
 python -m src.evaluation.benchmark
 ```
 
-### 4. Run the Automated Test Suite
+### 5. Run the Automated 12-Suite Test Pipeline
 
 ```bash
 python tests/test_pipeline.py

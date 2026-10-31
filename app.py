@@ -340,7 +340,9 @@ with tab_benchmark:
                 })
             
             st.table(table_data)
-            st.success("GraphRAG achieved 100% cross-modal and multi-hop discovery compared to Standard RAG failing on associative queries!")
+            avg_g = round(sum(r['graph_rag']['completeness'] for r in b_results) / len(b_results), 1)
+            avg_v = round(sum(r['standard_rag']['completeness'] for r in b_results) / len(b_results), 1)
+            st.info(f"📊 Evaluation Complete: GraphRAG averaged {avg_g}% multi-hop completeness vs. Standard Vector RAG's {avg_v}%.")
 
 # ---------------------------------------------------------------------------
 # Tab 4: Architecture & Ontologies
@@ -351,6 +353,6 @@ with tab_about:
     st.markdown("""
     - **Multimodal Ingestion**: Converts complex Form 10-K balance sheets and microservice architecture diagrams into typed property graphs.
     - **Dual Storage**: Fast, zero-dependency in-memory **NetworkX** for local exploration, with enterprise **Neo4j** Cypher synchronization.
-    - **Hybrid Retrieval**: Combines subword dense vector search with $k$-hop graph expansion and bridging path discovery.
+    - **Hybrid Retrieval**: Combines dense ONNX vector search (FastEmbed BAAI/bge-small-en-v1.5) with $k$-hop graph expansion and bridging path discovery.
     - **LangGraph Agent**: Dynamic state machine that assesses evidence completeness before synthesizing citation-backed answers.
     """)

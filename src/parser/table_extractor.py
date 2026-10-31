@@ -137,6 +137,15 @@ class FinancialTableExtractor:
                     category=cat
                 ))
 
+        # Correlate and attach footnotes / notes from document body (e.g. Note 4, Note 8)
+        note_sections = re.findall(r'(?:Note\s+\d+|###+\s*Note\s+\d+)[—\-\:\s]+([^\n]+(?:\n[^\n#]+)*)', raw_text, re.IGNORECASE)
+        for note_text in note_sections:
+            note_lower = note_text.lower()
+            for item in line_items:
+                keywords = [k for k in item.name.lower().split() if len(k) > 4 and k not in ("total", "other", "under")]
+                if any(kw in note_lower for kw in keywords):
+                    item.footnotes.append(note_text.strip())
+
         statement = FinancialStatement(
             statement_type="balance_sheet",
             company_name=company_name,

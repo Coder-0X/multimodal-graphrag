@@ -47,6 +47,9 @@ class ArchitectureDiagramExtractor:
         mermaid_edge_regex = re.compile(
             r'([a-zA-Z0-9_\-]+)(?:\[([^\]]+)\]|\(([^\)]+)\)|\{([^\}]+)\})?\s*[-=]+>(?:\|([^|]+)\|)?\s*([a-zA-Z0-9_\-]+)(?:\[([^\]]+)\]|\(([^\)]+)\)|\{([^\}]+)\})?'
         )
+        standalone_node_regex = re.compile(
+            r'^([a-zA-Z0-9_\-]+)\s*(?:\[(?:\(|\[)?([^\]\)\}]+)(?:\)|\])?\]|\(([^\)]+)\)|\{([^\}]+)\})$'
+        )
         simple_arrow_regex = re.compile(
             r'([a-zA-Z0-9_\-\s]+?)\s*[-=]+>\s*([a-zA-Z0-9_\-\s]+?)(?:\s*[\(\[]([A-Za-z0-9_\-\/\s]+)[\)\]])?$'
         )
@@ -54,7 +57,7 @@ class ArchitectureDiagramExtractor:
 
         for line in raw_text.splitlines():
             line_str = line.strip()
-            if not line_str or line_str.startswith("```") or line_str.lower().startswith("flowchart") or line_str.lower().startswith("graph"):
+            if not line_str or line_str.startswith("%%") or line_str.startswith("```") or line_str.lower().startswith("flowchart") or line_str.lower().startswith("graph"):
                 continue
 
             # Detect subgraphs / zones
@@ -65,6 +68,20 @@ class ArchitectureDiagramExtractor:
                 continue
             if line_str == "end":
                 current_zone = "Default Zone"
+                continue
+
+            # Check standalone node definition inside zone
+            s_match = standalone_node_regex.match(line_str)
+            if s_match and not ("-->" in line_str or "->" in line_str):
+                nid = s_match.group(1).strip().lower()
+                nraw = s_match.group(2) or s_match.group(3) or s_match.group(4) or nid.replace('_', ' ').title()
+                nname = cls._clean_label(nraw)
+                nodes_dict[nid] = DiagramNode(
+                    id=nid,
+                    name=nname,
+                    component_type=cls._infer_component_type(nname),
+                    zone=current_zone
+                )
                 continue
 
             # 1. Try Mermaid edge match

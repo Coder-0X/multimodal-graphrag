@@ -166,46 +166,6 @@ class MultimodalGraphRAGPipeline:
             "computed_financial_ratios": self.statement.computed_metrics if self.statement else {}
         }
 
-    def _create_cross_modal_links(self) -> list[KGRelation]:
-        """
-        Synthesize cross-modal relationships connecting financial balance sheet line items
-        to the underlying cloud infrastructure components that incur or govern them.
-        """
-        cross_links = []
-        period = self.statement.reporting_period.lower() if self.statement else "fy2025"
-
-        # Link: Cloud Hosting Commitments (Financial Liability) -> Payment Orchestrator (Compute Consumer)
-        cross_links.append(KGRelation(
-            source_id=f"metric_cloud_hosting_commitments_and_short_term_obligations_{period}",
-            target_id="comp_payment_orchestrator",
-            relation_type="FUNDS_COMPUTE_INFRASTRUCTURE",
-            weight=2.0,
-            description="Balance sheet cloud hosting liabilities directly fund Kubernetes compute for payment orchestration",
-            evidence_snippet="10-K Footnote: AWS compute agreements support core payment transaction processing."
-        ))
-
-        # Link: Cloud Hosting Commitments -> Cloudflare CDN & WAF (Edge Security Provider)
-        cross_links.append(KGRelation(
-            source_id=f"metric_cloud_hosting_commitments_and_short_term_obligations_{period}",
-            target_id="comp_cloudflare_edge",
-            relation_type="FUNDS_EDGE_SECURITY",
-            weight=1.8,
-            description="Short-term cloud obligations include multi-year Cloudflare enterprise edge agreement",
-            evidence_snippet="10-K Footnote: Includes commitments for global DDoS and CDN edge capacity."
-        ))
-
-        # Link: Cloud Lease Assets (Non-Current Asset) -> Stateful Storage Tier (PostgreSQL Aurora)
-        cross_links.append(KGRelation(
-            source_id=f"metric_cloud_data_center_operating_lease_assets_{period}",
-            target_id="comp_postgres_primary",
-            relation_type="HOSTS_DATA_ASSET",
-            weight=1.5,
-            description="Operating lease assets represent dedicated hardware hosting primary database storage",
-            evidence_snippet="Balance sheet non-current asset: Cloud data center operating lease assets."
-        ))
-
-        return cross_links
-
     def query(self, user_question: str, max_hops: int = 2, search_mode: str = "auto") -> Dict[str, Any]:
         """
         Execute a query using either:
@@ -228,3 +188,32 @@ class MultimodalGraphRAGPipeline:
     def global_query(self, user_question: str) -> Dict[str, Any]:
         """Directly query the global community summarization engine."""
         return self.community_engine.global_search(user_question)
+
+
+if __name__ == "__main__":
+    import argparse
+    import sys
+    if sys.platform == "win32":
+        try:
+            sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+            sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+        except Exception:
+            pass
+
+    parser = argparse.ArgumentParser(description="Multimodal GraphRAG Enterprise Pipeline CLI")
+    parser.add_argument("--statement", type=str, default="", help="Path to Form 10-K balance sheet (Markdown or PDF)")
+    parser.add_argument("--topology", type=str, default="", help="Path to architecture diagram (Mermaid or text)")
+    parser.add_argument("--query", type=str, default="If our AWS cloud hosting commitment liabilities spike due to payment gateway traffic surge, which system components are directly involved?", help="Query to run")
+    parser.add_argument("--mode", type=str, choices=["auto", "local", "global"], default="auto", help="Retrieval mode")
+    parser.add_argument("--hops", type=int, default=2, help="Max graph hops")
+    args = parser.parse_args()
+
+    pipe = MultimodalGraphRAGPipeline(use_neo4j=False)
+    ingest_stats = pipe.ingest_documents(balance_sheet_path=args.statement, diagram_path=args.topology)
+    print(f"Ingestion Complete: {ingest_stats['total_entities']} entities, {ingest_stats['total_relations']} relations ({ingest_stats['cross_modal_relations']} cross-modal bridges).")
+    
+    res = pipe.query(args.query, max_hops=args.hops, search_mode=args.mode)
+    print("\n" + "=" * 60)
+    print("GRAPH-GROUNDED SYNTHESIS:")
+    print("=" * 60)
+    print(res.get("final_answer", ""))

@@ -1,0 +1,29 @@
+flowchart TD
+    %% Apple Private Cloud Compute (PCC) & Services Architecture
+
+    subgraph "Public Client"
+        apple_client[Apple Device Client iOS/macOS]
+    end
+
+    subgraph "Edge Network"
+        edge_gateway[Apple Global Edge Anycast Gateway]
+    end
+
+    subgraph "PCC Secure Cluster"
+        pcc_cluster[Private Cloud Compute Secure Enclave Node]
+    end
+
+    subgraph "Financial Zone"
+        apple_pay_daemon[Apple Pay Transaction Orchestrator]
+    end
+
+    subgraph "Storage Tier"
+        cloudkit_storage[(CloudKit Distributed Datastore)]
+    end
+
+    %% Directional Communication & Protocols
+    apple_client -->|QUIC / HTTP3| edge_gateway
+    edge_gateway -->|mTLS / Cryptographic Attestation| pcc_cluster
+    pcc_cluster -->|gRPC / Encrypted| cloudkit_storage
+    apple_client -->|NFC / Secure Element Token| apple_pay_daemon
+    apple_pay_daemon -->|TLS| cloudkit_storage

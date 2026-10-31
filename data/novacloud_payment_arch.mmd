@@ -1,0 +1,41 @@
+flowchart TD
+    %% NovaCloud Global Payment Platform Architecture Topology
+
+    subgraph "Public Internet"
+        checkout_ui[User Checkout Web Frontend]
+    end
+
+    subgraph "Edge Network"
+        cloudflare_edge[Cloudflare Global CDN & WAF]
+    end
+
+    subgraph "Ingress DMZ"
+        kong_gateway[Kong Ingress API Gateway]
+    end
+
+    subgraph "Internal Application VPC"
+        payment_orchestrator[Payment Orchestration Microservice]
+        fraud_detector[Real-Time Fraud & Risk Engine]
+        kafka_cluster[Kafka Event Streaming Backbone]
+        redis_cache[(Redis In-Memory Session Cache)]
+    end
+
+    subgraph "Stateful Storage Tier"
+        postgres_primary[(PostgreSQL Multi-Region Primary DB)]
+        postgres_replica[(PostgreSQL Secondary Failover Replica)]
+    end
+
+    subgraph "Hybrid Cloud Link"
+        aws_direct_connect[AWS Direct Connect Failover Broker]
+    end
+
+    %% Directional Flows & Transport Protocols
+    checkout_ui -->|HTTPS| cloudflare_edge
+    cloudflare_edge -->|HTTPS/mTLS| kong_gateway
+    kong_gateway -->|gRPC| payment_orchestrator
+    payment_orchestrator -->|TCP/Redis| redis_cache
+    payment_orchestrator -->|gRPC| fraud_detector
+    payment_orchestrator -->|Kafka Wire Protocol| kafka_cluster
+    payment_orchestrator -->|PostgreSQL Wire Protocol| postgres_primary
+    postgres_primary -->|WAL Streaming| postgres_replica
+    postgres_primary -->|BGP / IPsec| aws_direct_connect
