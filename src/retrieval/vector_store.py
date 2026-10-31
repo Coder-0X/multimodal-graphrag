@@ -1,125 +1,119 @@
 """
-Vector Embedding and Semantic Index.
-Provides dense cosine and lexical similarity search over Knowledge Graph entities
-and document chunks to discover seed anchor nodes for multi-hop graph expansion.
+Dense Vector Embedding Store using FastEmbed (ONNX Runtime).
+Produces authentic 384-dimensional dense embeddings (BAAI/bge-small-en-v1.5)
+and computes exact cosine similarity for seed entity and chunk retrieval.
+Includes lightweight lexical fallback for zero-dependency offline environments.
 """
 from typing import List, Dict, Any, Tuple, Optional
 import math
-import re
-from collections import Counter
+import numpy as np
 from ..parser.schemas import KGEntity
 
+try:
+    from fastembed import TextEmbedding
+    FASTEMBED_AVAILABLE = True
+except ImportError:
+    FASTEMBED_AVAILABLE = False
 
-class SimpleDenseVectorStore:
+
+class DenseVectorStore:
     """
-    Self-contained semantic vector store using term frequency-inverse document frequency
-    (TF-IDF) and n-gram subword embeddings with cosine similarity.
-    Provides fast, zero-dependency semantic vector search over entity descriptions and chunks.
+    Production-grade dense vector store.
+    Uses ONNX-quantized Transformer embeddings (BAAI/bge-small-en-v1.5)
+    to perform true dense semantic search over knowledge graph entities and text chunks.
     """
 
-    def __init__(self):
-        self.documents: Dict[str, Dict[str, Any]] = {}
-        self._doc_vectors: Dict[str, Dict[str, float]] = {}
-        self._idf: Dict[str, float] = {}
-        self._vocab: set = set()
-
-    def _tokenize(self, text: str) -> List[str]:
-        """Normalize text and generate word + char 3-gram tokens for semantic robustness."""
-        clean = re.sub(r'[^a-zA-Z0-9_\s]', ' ', text.lower())
-        words = [w for w in clean.split() if len(w) > 1]
+    def __init__(self, model_name: str = "BAAI/bge-small-en-v1.5"):
+        self.model_name = model_name
+        self._model = None
+        self.doc_ids: List[str] = []
+        self.doc_texts: List[str] = []
+        self.doc_metadata: List[Dict[str, Any]] = []
+        self.embeddings: Optional[np.ndarray] = None  # Shape: (N, 384)
         
-        # Add subword 3-grams to handle partial matches and terminology variations
-        subwords = []
-        for word in words:
-            if len(word) >= 3:
-                for i in range(len(word) - 2):
-                    subwords.append(f"#{word[i:i+3]}")
-        return words + subwords
+        if FASTEMBED_AVAILABLE:
+            try:
+                self._model = TextEmbedding(model_name=model_name)
+            except Exception:
+                self._model = None
+
+    @property
+    def is_dense(self) -> bool:
+        return self._model is not None
+
+    def embed_texts(self, texts: List[str]) -> np.ndarray:
+        """Compute normalized dense embeddings for a batch of strings."""
+        if self._model is not None:
+            # fastembed yields normalized numpy arrays
+            embs = list(self._model.embed(texts))
+            arr = np.array(embs, dtype=np.float32)
+            # Ensure L2 normalization
+            norms = np.linalg.norm(arr, axis=1, keepdims=True)
+            norms[norms == 0] = 1e-9
+            return arr / norms
+        else:
+            # Fallback pseudo-dense hash projection if model unavailable
+            return self._fallback_hash_embed(texts)
+
+    def _fallback_hash_embed(self, texts: List[str], dim: int = 128) -> np.ndarray:
+        """Deterministic hash-based dense projection fallback."""
+        vectors = []
+        for t in texts:
+            vec = np.zeros(dim, dtype=np.float32)
+            for w in t.lower().split():
+                h = abs(hash(w)) % dim
+                vec[h] += 1.0
+            norm = np.linalg.norm(vec) or 1.0
+            vectors.append(vec / norm)
+        return np.array(vectors, dtype=np.float32)
 
     def add_document(self, doc_id: str, text: str, metadata: Optional[Dict[str, Any]] = None) -> None:
-        """Add a text document or entity description to the vector store."""
-        tokens = self._tokenize(text)
-        self.documents[doc_id] = {
-            "text": text,
-            "metadata": metadata or {},
-            "tokens": tokens
-        }
-        self._rebuild_index()
+        """Add a document or chunk to the index."""
+        emb = self.embed_texts([text])  # shape (1, D)
+        self.doc_ids.append(doc_id)
+        self.doc_texts.append(text)
+        self.doc_metadata.append(metadata or {})
+
+        if self.embeddings is None:
+            self.embeddings = emb
+        else:
+            self.embeddings = np.vstack([self.embeddings, emb])
 
     def add_entity(self, entity: KGEntity) -> None:
-        """Index an entity for vector retrieval."""
-        full_text = f"{entity.name} {entity.entity_type} {entity.description} " + " ".join(
-            f"{k}:{v}" for k, v in entity.properties.items() if isinstance(v, (str, int, float))
-        )
+        """Index a Knowledge Graph entity for dense semantic retrieval."""
+        props = " ".join(f"{k}: {v}" for k, v in entity.properties.items() if isinstance(v, (str, int, float)))
+        full_text = f"Entity: {entity.name}. Type: {entity.entity_type}. Description: {entity.description}. Details: {props}"
         self.add_document(
             doc_id=entity.id,
             text=full_text,
             metadata={"entity": entity.model_dump(), "type": "entity"}
         )
 
-    def _rebuild_index(self):
-        """Calculate TF-IDF vector representations across all indexed documents."""
-        n_docs = len(self.documents)
-        if n_docs == 0:
-            return
-
-        # 1. Document Frequencies
-        df: Dict[str, int] = Counter()
-        for doc in self.documents.values():
-            unique_terms = set(doc["tokens"])
-            for t in unique_terms:
-                df[t] += 1
-
-        # 2. IDF
-        self._idf = {
-            t: math.log((1 + n_docs) / (1 + count)) + 1.0
-            for t, count in df.items()
-        }
-
-        # 3. Normalized Doc Vectors
-        self._doc_vectors = {}
-        for doc_id, doc in self.documents.items():
-            tf = Counter(doc["tokens"])
-            vec: Dict[str, float] = {}
-            norm_sq = 0.0
-            for t, count in tf.items():
-                w = (1 + math.log(count)) * self._idf.get(t, 1.0)
-                vec[t] = w
-                norm_sq += w * w
-            
-            norm = math.sqrt(norm_sq) or 1.0
-            self._doc_vectors[doc_id] = {t: val / norm for t, val in vec.items()}
-
     def search(self, query: str, top_k: int = 5) -> List[Tuple[str, float, Dict[str, Any]]]:
-        """Perform cosine similarity vector search for the query."""
-        if not self._doc_vectors:
+        """Perform dense cosine similarity search."""
+        if self.embeddings is None or len(self.doc_ids) == 0:
             return []
 
-        q_tokens = self._tokenize(query)
-        if not q_tokens:
-            return []
-
-        q_tf = Counter(q_tokens)
-        q_vec: Dict[str, float] = {}
-        q_norm_sq = 0.0
-        for t, count in q_tf.items():
-            idf_val = self._idf.get(t, 1.0)
-            w = (1 + math.log(count)) * idf_val
-            q_vec[t] = w
-            q_norm_sq += w * w
+        q_emb = self.embed_texts([query])[0]  # shape (D,)
         
-        q_norm = math.sqrt(q_norm_sq) or 1.0
-        norm_q_vec = {t: val / q_norm for t, val in q_vec.items()}
+        # Cosine similarity via inner product on normalized vectors
+        scores = np.dot(self.embeddings, q_emb)  # shape (N,)
+        
+        top_indices = np.argsort(scores)[::-1][:top_k]
+        
+        results = []
+        for idx in top_indices:
+            score = float(scores[idx])
+            if score > 0.15:  # Relevance cutoff
+                results.append((self.doc_ids[idx], score, self.doc_metadata[idx]))
+        
+        return results
 
-        scores: List[Tuple[str, float]] = []
-        for doc_id, doc_vec in self._doc_vectors.items():
-            # Dot product
-            score = 0.0
-            for t, q_val in norm_q_vec.items():
-                if t in doc_vec:
-                    score += q_val * doc_vec[t]
-            if score > 0.01:
-                scores.append((doc_id, score))
+    def compute_similarity(self, text_a: str, text_b: str) -> float:
+        """Compute semantic cosine similarity between two arbitrary texts."""
+        embs = self.embed_texts([text_a, text_b])
+        return float(np.dot(embs[0], embs[1]))
 
-        scores.sort(key=lambda x: x[1], reverse=True)
-        return [(doc_id, score, self.documents[doc_id]["metadata"]) for doc_id, score in scores[:top_k]]
+
+# Backwards compatibility alias
+SimpleDenseVectorStore = DenseVectorStore

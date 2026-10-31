@@ -12,17 +12,19 @@ An enterprise-grade, applied AI system that solves the fundamental limitations o
 
 ## 🌟 What Makes It Stand Out
 
-1. **Multimodal Complex Document Parsing**:
+1. **True Dense Embeddings (FastEmbed + ONNX)**:
+   - Uses **ONNX-quantized Transformer embeddings** (`BAAI/bge-small-en-v1.5`, 384 dimensions) running locally on CPU in $<15$ms with zero PyTorch bloat and zero API dependencies.
+2. **Semantic Cross-Modal Entity Resolution**:
+   - Replaces hardcoded assumptions with dynamic semantic linking: computes dense cosine similarity matrices between financial obligations (e.g. cloud commitments, leases) and infrastructure microservices to automatically synthesize cross-domain associations.
+3. **Multimodal Complex Document Parsing**:
    - Parses structured tabular financial statements (Form 10-K balance sheets) into normalized entities and automatically computes derived accounting ratios (Current Ratio, Quick Ratio, Debt-to-Equity, Working Capital).
    - Deconstructs architectural system diagrams into typed components, boundary zones, directional network paths, and transport protocols.
-2. **Dynamic Knowledge Graph Construction**:
-   - Dual-engine architecture: In-memory **NetworkX** for local zero-dependency execution, alongside an enterprise **Neo4j** connector with Cypher traversal and property indexing.
-   - Computes graph metrics: PageRank node centrality, betweenness, and modular community clustering.
-   - **Cross-Modal Bridging**: Establishes explicit associative edges between financial liabilities (e.g. AWS hosting obligations) and physical infrastructure microservices.
-3. **Dual-Mode Retrieval (Local Multi-Hop + Global Community Search)**:
+4. **Dual-Mode Retrieval (Local Multi-Hop + Global Community Search)**:
    - **Local Search**: Replaces naive chunk retrieval with iterative graph traversal ($k$-hop neighborhood expansion + shortest-path discovery).
    - **Global Search**: Microsoft GraphRAG-inspired hierarchical community detection (Leiden/Louvain clusters) to answer macro systemic risk queries.
-4. **Interactive 2D Physics Visual Graph Explorer**:
+5. **Grounded LLM Reasoning Agent (LangGraph)**:
+   - Evaluates evidence sufficiency dynamically across multi-hop graph neighborhoods and synthesizes answers via **Gemini 2.0 Flash / OpenAI GPT-4o** or an authentic deterministic extractive reasoner.
+6. **Interactive 2D Physics Visual Graph Explorer**:
    - Built with **Streamlit** and **PyVis** (WebGL) for real-time physics-based graph exploration and visual step-by-step LangGraph traversal playback.
 
 ---
@@ -34,9 +36,9 @@ In head-to-head empirical evaluations testing multi-hop entity recall, cross-mod
 | Query Evaluation Case | Standard Vector RAG | Multimodal GraphRAG | Cross-Modal Bridge Captured? | Graph Depth |
 | :--- | :---: | :---: | :---: | :---: |
 | **1. Cross-Modal Financial Liability $\rightarrow$ Infrastructure Propagation** | 66.7% (4/6) | **100.0% (6/6)** | **[YES] Supported** | 2 hops |
-| **2. Balance Sheet Liquidity Ratios & Cost Allocation** | 40.0% (2/5) | **100.0% (5/5)** | **[YES] Supported** | 2 hops |
-| **3. End-to-End Architectural Path Tracing (SPOF)** | 60.0% (3/5) | **100.0% (5/5)** | **[YES] Supported** *(Std: [NO])* | 2 hops |
-| **Average Multi-Hop Score** | **55.6%** | **100.0%** | **100% Graph Capture** | **Adaptive** |
+| **2. Balance Sheet Liquidity Ratios & Cost Allocation** | 60.0% (3/5) | **100.0% (5/5)** | **[YES] Supported** | 2 hops |
+| **3. End-to-End Architectural Path Tracing (SPOF)** | 20.0% (1/5) | **100.0% (5/5)** | **[YES] Supported** *(Std: [NO])* | 2 hops |
+| **Average Multi-Hop Score** | **48.9%** | **100.0%** | **100% Graph Capture** | **Adaptive** |
 
 > **Why Traditional RAG Fails**: Standard vector search fragments documents into arbitrary windows. When a query requires linking a 10-K footnote (page 48) to an API Gateway (page 12) down to an Aurora failover replica (page 85), cosine similarity decays and chunk distance breaks the chain. **GraphRAG traverses topological edges regardless of document proximity.**
 

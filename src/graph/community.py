@@ -142,12 +142,23 @@ class HierarchicalCommunityEngine:
             lines.append("")
 
         lines.append("#### Cross-Cutting Synthesis & Strategic Assessment:")
-        lines.append(
-            "- **Infrastructure-Financial Coupling**: Short-term cloud hosting obligations directly sponsor Kubernetes execution and DDoS protection, making liquidity health dependent on traffic elasticity."
-        )
-        lines.append(
-            "- **Resilience Posture**: Storage and event tiers maintain multi-region disaster recovery, mitigating single points of failure across stateful partitions."
-        )
+        
+        # Dynamically evaluate multi-community interactions
+        fin_clusters = [c for _, c in matched_summaries if any(e.entity_type == "FINANCIAL_METRIC" for e in c.entities)]
+        sys_clusters = [c for _, c in matched_summaries if any(e.entity_type == "SYSTEM_COMPONENT" for e in c.entities)]
+
+        if fin_clusters and sys_clusters:
+            fin_title = fin_clusters[0].title
+            sys_title = sys_clusters[0].title
+            lines.append(
+                f"- **Cross-Domain Coupling ({fin_title} ↔ {sys_title})**: "
+                f"Financial obligations in {fin_title} directly govern infrastructure investments and capacity bounds in {sys_title}."
+            )
+        
+        for _, comm in matched_summaries[:3]:
+            if comm.relations:
+                sample_rel = comm.relations[0]
+                lines.append(f"- **{comm.title} Intracluster Dynamic**: Internal linkage `{sample_rel.source_id}` ──[{sample_rel.relation_type}]──▶ `{sample_rel.target_id}`.")
 
         return {
             "query": query,

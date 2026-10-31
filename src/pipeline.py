@@ -19,9 +19,10 @@ from .graph import (
     NetworkXGraphStore,
     Neo4jGraphStore,
     BaseGraphStore,
-    HierarchicalCommunityEngine
+    HierarchicalCommunityEngine,
+    SemanticCrossModalLinker
 )
-from .retrieval import SimpleDenseVectorStore, HybridRetriever
+from .retrieval import DenseVectorStore, HybridRetriever
 from .agent import GraphRAGAgent
 
 
@@ -31,8 +32,9 @@ class MultimodalGraphRAGPipeline:
     def __init__(self, use_neo4j: bool = False, neo4j_uri: str = "bolt://localhost:7687"):
         self.parser = MultimodalVisionParser()
         self.nx_store = NetworkXGraphStore()
-        self.vector_store = SimpleDenseVectorStore()
+        self.vector_store = DenseVectorStore()
         self.community_engine = HierarchicalCommunityEngine(graph_store=self.nx_store)
+        self.cross_modal_linker = SemanticCrossModalLinker(vector_store=self.vector_store)
         
         # Dual-engine support
         self.use_neo4j = use_neo4j
@@ -72,23 +74,22 @@ class MultimodalGraphRAGPipeline:
         # 3. Add to Graph Store
         for ent in f_entities + a_entities:
             self.nx_store.add_entity(ent)
+            self.vector_store.add_entity(ent)
         for rel in f_relations + a_relations:
             self.nx_store.add_relation(rel)
 
-        # 4. Synthesize Cross-Modal Bridges
-        cross_relations = self._create_cross_modal_links()
+        # 4. Synthesize Cross-Modal Bridges via Dense Semantic Similarity
+        cross_relations = self.cross_modal_linker.discover_cross_modal_links(
+            list(self.nx_store._entities.values())
+        )
         for rel in cross_relations:
             self.nx_store.add_relation(rel)
 
-        # 5. Populate Vector Store
-        for ent in f_entities + a_entities:
-            self.vector_store.add_entity(ent)
-
-        # 6. If Neo4j is enabled and connected, sync full graph
+        # 5. If Neo4j is enabled and connected, sync full graph
         if self.use_neo4j and self.neo4j_store and self.neo4j_store.is_connected:
             self.neo4j_store.sync_from_networkx(self.nx_store)
 
-        # 7. Compute Graph Analytics & Build Hierarchical Communities
+        # 6. Compute Graph Analytics & Build Hierarchical Communities
         communities = self.community_engine.build_communities()
         centrality = self.nx_store.calculate_centrality()
 
@@ -106,6 +107,12 @@ class MultimodalGraphRAGPipeline:
             "top_central_entities": [(self.nx_store.get_entity(nid).name if self.nx_store.get_entity(nid) else nid, round(score, 4)) for nid, score in top_hubs],
             "computed_financial_ratios": self.statement.computed_metrics
         }
+
+    def _create_cross_modal_links(self) -> list[KGRelation]:
+        """Backward-compatible dynamic cross-modal discovery."""
+        return self.cross_modal_linker.discover_cross_modal_links(
+            list(self.nx_store._entities.values())
+        )
 
     def ingest_apple_showcase(self) -> Dict[str, Any]:
         """Ingest Apple Inc. FY2024 Form 10-K and Private Cloud Compute Architecture."""
@@ -136,8 +143,10 @@ class MultimodalGraphRAGPipeline:
             for rel in a_relations:
                 self.nx_store.add_relation(rel)
 
-        # Re-link and rebuild communities
-        cross_relations = self._create_cross_modal_links()
+        # Re-link dynamically using dense embeddings and rebuild communities
+        cross_relations = self.cross_modal_linker.discover_cross_modal_links(
+            list(self.nx_store._entities.values())
+        )
         for rel in cross_relations:
             self.nx_store.add_relation(rel)
 

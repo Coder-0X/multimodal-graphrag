@@ -70,6 +70,25 @@ st.sidebar.markdown(f"**Active Dataset**: `{st.session_state['active_dataset']}`
 st.sidebar.markdown(f"**Hierarchical Communities**: `{stats['communities']}` detected")
 
 st.sidebar.markdown("---")
+st.sidebar.markdown("### 🔑 Live AI Model Settings")
+sidebar_api_key = st.sidebar.text_input(
+    "Gemini / OpenAI API Key:",
+    type="password",
+    placeholder="AIzaSy... or sk-...",
+    help="Optional. Enables live Gemini 2.0 Flash or GPT-4o-mini generation. Leave blank to run local ONNX FastEmbed + extractive reasoner."
+)
+
+if sidebar_api_key:
+    if sidebar_api_key.startswith("AIza"):
+        pipeline.agent.llm_client.gemini_key = sidebar_api_key
+        st.sidebar.success("✅ Gemini 2.0 Flash Live Active")
+    else:
+        pipeline.agent.llm_client.openai_key = sidebar_api_key
+        st.sidebar.success("✅ OpenAI Live Active")
+else:
+    st.sidebar.info("⚡ Local Engine: ONNX FastEmbed (bge-small-en-v1.5) + Extractive Reasoner")
+
+st.sidebar.markdown("---")
 st.sidebar.markdown("### 📊 Ingested Financial Ratios")
 if stats["ratios"]:
     for r_name, r_val in stats["ratios"].items():
@@ -260,19 +279,19 @@ with tab_ingest:
                             statement = parser.extract_from_pdf(file_bytes)
                             ingest_stats = pipeline.ingest_custom_data(statement=statement)
                             st.session_state["active_dataset"] = f"Uploaded PDF: {uploaded_file.name}"
-                        elif api_key_input:
+                        elif api_key_input or sidebar_api_key:
+                            key = api_key_input or sidebar_api_key
                             mime = "image/png" if file_name.endswith(".png") else "image/jpeg"
-                            extracted = parser.extract_from_image_gemini(file_bytes, mime_type=mime, api_key=api_key_input)
+                            extracted = parser.extract_from_image_gemini(file_bytes, mime_type=mime, api_key=key)
                             st.json(extracted)
                             st.session_state["active_dataset"] = f"Gemini Vision Extracted: {uploaded_file.name}"
+                            st.success("Successfully ingested image via live Gemini 2.0 Flash Vision!")
+                            st.rerun()
                         else:
-                            # Graceful simulated parsing for images when no API key is set
-                            statement = parser.parse_balance_sheet("")
-                            ingest_stats = pipeline.ingest_custom_data(statement=statement)
-                            st.session_state["active_dataset"] = f"Parsed Sample: {uploaded_file.name}"
-
-                        st.success(f"Successfully ingested! Added entities and updated Knowledge Graph.")
-                        st.rerun()
+                            st.warning(
+                                "Live visual extraction from raw images requires a Gemini API Key. "
+                                "Please enter your key above, or click 'Load Apple Inc.' on the right for full multi-hop demonstration without an API key."
+                            )
                     except Exception as e:
                         st.error(f"Error during ingestion: {e}")
 

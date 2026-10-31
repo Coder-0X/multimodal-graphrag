@@ -7,16 +7,18 @@ from typing import Dict, Any, List
 import re
 from langgraph.graph import StateGraph, START, END
 from .state import AgentState
+from .llm_client import LLMReasoningClient
 from ..retrieval.hybrid_retriever import HybridRetriever
 from ..graph.base import BaseGraphStore
 
 
 class GraphRAGAgent:
-    """LangGraph-driven Multi-Hop GraphRAG Agent."""
+    """LangGraph-driven Multi-Hop GraphRAG Agent with Grounded LLM Synthesis."""
 
-    def __init__(self, retriever: HybridRetriever, graph_store: BaseGraphStore):
+    def __init__(self, retriever: HybridRetriever, graph_store: BaseGraphStore, api_key: str = None):
         self.retriever = retriever
         self.graph_store = graph_store
+        self.llm_client = LLMReasoningClient(api_key=api_key)
         self.workflow = self._build_graph()
 
     def _build_graph(self):
@@ -188,88 +190,27 @@ class GraphRAGAgent:
         }
 
     def _synthesize_answer(self, state: AgentState) -> Dict[str, Any]:
-        """Synthesize final structured, citation-grounded response."""
+        """Synthesize final citation-grounded response via LLMReasoningClient."""
         query = state["query"]
         intent = state["intent"]
         entities = state["retrieved_subgraph_entities"]
         relations = state["retrieved_subgraph_relations"]
         paths = state["bridging_paths"]
-        citations = []
+        evidence_text = state.get("evidence_text", "")
 
-        ent_map = {e["id"]: e for e in entities}
+        synthesis_result = self.llm_client.generate_synthesis(
+            query=query,
+            intent=intent,
+            entities=entities,
+            relations=relations,
+            paths=paths,
+            evidence_text=evidence_text
+        )
 
-        # Build citations from traversed relations and balance sheet metrics
-        for r in relations:
-            src = ent_map.get(r["source_id"], {}).get("name", r["source_id"])
-            tgt = ent_map.get(r["target_id"], {}).get("name", r["target_id"])
-            cite = f"({src}) --[{r['relation_type']}]--> ({tgt})"
-            if cite not in citations:
-                citations.append(cite)
-
-        # Structured synthesis based on domain reasoning
-        lines: List[str] = []
-        lines.append(f"### Multi-Hop Reasoning Resolution for: \"{query}\"\n")
-        lines.append(f"**Intent**: `{intent}` | **Graph Traversal Depth**: `{state['hop_count'] + 1}` hops | **Identified Entities**: `{len(entities)}`\n")
-
-        # If bridging paths were uncovered:
-        if paths:
-            lines.append("#### Multi-Hop Traversal Path:")
-            for p in paths:
-                named = [ent_map.get(nid, {}).get("name", nid) for nid in p]
-                lines.append(f"```text\n{' --> '.join(named)}\n```")
-            lines.append("")
-
-        # Synthesize domain-specific findings
-        lines.append("#### Grounded Evidence & Analysis:")
-
-        # Financial Metrics Table if relevant
-        financial_items = [e for e in entities if e["entity_type"] == "FINANCIAL_METRIC"]
-        if financial_items:
-            lines.append("**Financial Statement Metrics Uncovered:**")
-            for item in financial_items:
-                props = item.get("properties", {})
-                val = props.get("value")
-                scale = props.get("scale", "")
-                curr = props.get("currency", "")
-                if val is not None:
-                    lines.append(f"- **{item['name']}**: `{val:,}` {curr} ({scale}) — *{item['description']}*")
-                else:
-                    lines.append(f"- **{item['name']}**: *{item['description']}*")
-            lines.append("")
-
-        # Architectural Components if relevant
-        system_items = [e for e in entities if e["entity_type"] == "SYSTEM_COMPONENT"]
-        if system_items:
-            lines.append("**System Architecture Components & Flow:**")
-            for item in system_items:
-                props = item.get("properties", {})
-                ctype = props.get("component_type", "component")
-                zone = props.get("zone", "VPC")
-                lines.append(f"- **{item['name']}** (Type: `{ctype}`, Zone: `{zone}`): {item['description']}")
-            lines.append("")
-
-        # Identify Single Points of Failure or Key Bottlenecks
-        if intent in ("ARCHITECTURE_DEPENDENCY_TRACING", "SYSTEM_FAULT_PROPAGATION", "CROSS_MODAL_FINANCIAL_INFRASTRUCTURE"):
-            lines.append("#### Critical Path & Risk Assessment:")
-            # Find nodes with high in-degree or critical path edges
-            critical_rels = [r for r in relations if r.get("weight", 1.0) > 1.0 or "critical" in r.get("description", "").lower()]
-            if critical_rels:
-                for cr in critical_rels:
-                    src = ent_map.get(cr["source_id"], {}).get("name", cr["source_id"])
-                    tgt = ent_map.get(cr["target_id"], {}).get("name", cr["target_id"])
-                    lines.append(f"- **Critical Dependency Identified**: `{src}` connects to `{tgt}` via `{cr.get('description', '')}`.")
-            else:
-                lines.append("- Analyzed bidirectional dependencies across gateway, queue, and database replicas to ensure zero unhandled single points of failure.")
-            lines.append("")
-
-        lines.append("#### Knowledge Graph Subgraph Provenance:")
-        for c in citations[:8]:
-            lines.append(f"- {c}")
-
-        final_text = "\n".join(lines)
         return {
-            "final_answer": final_text,
-            "citations": citations
+            "final_answer": synthesis_result["answer"],
+            "citations": synthesis_result["citations"],
+            "engine": synthesis_result.get("engine", "Extractive Graph-Reasoner")
         }
 
     def run(self, query: str, max_hops: int = 2) -> Dict[str, Any]:
