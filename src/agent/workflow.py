@@ -74,29 +74,29 @@ class GraphRAGAgent:
         }
 
     def _seed_retrieval(self, state: AgentState) -> Dict[str, Any]:
-        """Retrieve seed anchor entities and initial 1-hop subgraph."""
+        """Retrieve anchor seed entities and initial 1-hop seed neighborhood."""
         query = state["query"]
         reasoning = list(state["intermediate_reasoning"])
 
+        # Fetch only immediate 1-hop local neighborhood without pre-solving multi-hop paths
         retrieval_res = self.retriever.retrieve(
             query=query,
             top_k_seeds=5,
-            k_hops=2,
-            find_paths=True
+            k_hops=1,
+            find_paths=False
         )
 
         seed_ids = [doc_id for doc_id, score, meta in retrieval_res["seed_entities"]]
-        reasoning.append(f"Discovered {len(seed_ids)} anchor seed entities: {seed_ids}")
-        if retrieval_res["bridging_paths"]:
-            reasoning.append(f"Found {len(retrieval_res['bridging_paths'])} bridging multi-hop paths between seeds.")
+        reasoning.append(f"Hop 1: Discovered {len(seed_ids)} anchor seed entities: {seed_ids}")
 
         return {
             "seed_entities": seed_ids,
             "retrieved_subgraph_entities": [e.model_dump() for e in retrieval_res["subgraph_entities"]],
             "retrieved_subgraph_relations": [r.model_dump() for r in retrieval_res["subgraph_relations"]],
-            "bridging_paths": retrieval_res["bridging_paths"],
+            "bridging_paths": [],
             "evidence_text": retrieval_res["formatted_evidence"],
-            "intermediate_reasoning": reasoning
+            "intermediate_reasoning": reasoning,
+            "hop_count": 1
         }
 
     def _evaluate_evidence(self, state: AgentState) -> Dict[str, Any]:
@@ -109,9 +109,9 @@ class GraphRAGAgent:
         reasoning = list(state["intermediate_reasoning"])
 
         # Stopping criteria:
-        # 1. We reached max_hops
-        # 2. For cross-modal queries, we have active bridging paths connecting both domains
-        # 3. For path tracing, we have reached the terminal storage tier or max_hops
+        # 1. We reached max_hops budget
+        # 2. For cross-modal queries: we have established bridging paths connecting financial & infrastructure domains
+        # 3. For path tracing: we have reached the terminal stateful persistence tier or connected endpoints
         is_sufficient = False
         if hop_count >= max_hops:
             is_sufficient = True
@@ -121,9 +121,8 @@ class GraphRAGAgent:
                 is_sufficient = True
                 reasoning.append(f"Resolved {len(bridging_paths)} cross-modal bridging paths connecting financial obligations to infrastructure.")
             else:
-                reasoning.append(f"No bridging path found yet at hop {hop_count + 1}; expanding neighborhood...")
+                reasoning.append(f"Cross-modal bridge not yet resolved at hop {hop_count}; expanding frontier to connect domains...")
         elif intent == "ARCHITECTURE_DEPENDENCY_TRACING":
-            # Domain-agnostic check: verify if the traversal has reached a persistent storage tier or terminal sink
             terminal_types = {"database", "storage", "datastore", "cache", "data_store", "sink"}
             has_persistence = any(
                 e.get("properties", {}).get("component_type", "").lower() in terminal_types
@@ -131,16 +130,16 @@ class GraphRAGAgent:
                 or any(term in e.get("properties", {}).get("zone", "").lower() for term in ["storage", "persistence", "stateful", "data"])
                 for e in state["retrieved_subgraph_entities"]
             )
-            if has_persistence and (bridging_paths or hop_count >= 1):
+            if has_persistence and (bridging_paths or hop_count >= 2):
                 is_sufficient = True
                 reasoning.append("Multi-hop topology trace successfully reached the stateful persistence tier.")
             else:
-                reasoning.append(f"Tracing downstream path towards persistence tier (currently at hop {hop_count + 1})...")
-        elif len(relations) >= 8:
+                reasoning.append(f"Tracing downstream path towards persistence tier (currently at hop {hop_count})...")
+        elif len(relations) >= 12 or hop_count >= 2:
             is_sufficient = True
-            reasoning.append("Sufficient domain entities retrieved.")
+            reasoning.append(f"Sufficient domain context retrieved ({len(relations)} relations at hop {hop_count}).")
         else:
-            reasoning.append("Expanding neighborhood for deeper context...")
+            reasoning.append(f"Expanding neighborhood for deeper context at hop {hop_count}...")
 
         return {
             "is_sufficient": is_sufficient,
@@ -159,22 +158,25 @@ class GraphRAGAgent:
 
         sub_entities, sub_relations = self.graph_store.get_k_hop_subgraph(
             seed_ids=seed_ids,
-            k=current_hops + 1,
+            k=current_hops,
             direction="both"
         )
 
         reasoning.append(
-            f"Expanded to hop {current_hops + 1}: Subgraph now contains {len(sub_entities)} entities and {len(sub_relations)} relations."
+            f"Hop {current_hops}: Expanded subgraph to {len(sub_entities)} entities and {len(sub_relations)} relations."
         )
 
-        # Check for newly discovered paths between seeds
+        # Check for newly discovered paths between seeds across the expanded frontier
         bridging_paths = list(state.get("bridging_paths", []))
-        if len(seed_ids) >= 2 and not bridging_paths:
+        if len(seed_ids) >= 2:
+            bridging_paths = []
             for i in range(len(seed_ids)):
-                for j in range(i + 1, len(seed_ids)):
+                for j in range(i + 1, min(len(seed_ids), 4)):
                     p = self.graph_store.find_shortest_path(seed_ids[i], seed_ids[j])
-                    if p:
+                    if p and len(p) > 1:
                         bridging_paths.append(p)
+            if bridging_paths:
+                reasoning.append(f"Hop {current_hops}: Resolved {len(bridging_paths)} bridging paths between seeds.")
 
         return {
             "hop_count": current_hops,

@@ -74,10 +74,10 @@ class MultimodalGraphRAGPipeline:
         self.topology = self.parser.parse_architecture_diagram(diagram_path or "")
         a_entities, a_relations = ArchitectureDiagramExtractor.to_knowledge_graph(self.topology)
 
-        # 3. Add to Graph Store
+        # 3. Add to Graph Store and Vector Store (Batched)
         for ent in f_entities + a_entities:
             self.nx_store.add_entity(ent)
-            self.vector_store.add_entity(ent)
+        self.vector_store.add_entities(f_entities + a_entities)
         for rel in f_relations + a_relations:
             self.nx_store.add_relation(rel)
 
@@ -133,7 +133,7 @@ class MultimodalGraphRAGPipeline:
             f_entities, f_relations = FinancialTableExtractor.to_knowledge_graph(self.statement)
             for ent in f_entities:
                 self.nx_store.add_entity(ent)
-                self.vector_store.add_entity(ent)
+            self.vector_store.add_entities(f_entities)
             for rel in f_relations:
                 self.nx_store.add_relation(rel)
 
@@ -142,7 +142,7 @@ class MultimodalGraphRAGPipeline:
             a_entities, a_relations = ArchitectureDiagramExtractor.to_knowledge_graph(self.topology)
             for ent in a_entities:
                 self.nx_store.add_entity(ent)
-                self.vector_store.add_entity(ent)
+            self.vector_store.add_entities(a_entities)
             for rel in a_relations:
                 self.nx_store.add_relation(rel)
 

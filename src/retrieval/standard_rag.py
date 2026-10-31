@@ -28,6 +28,10 @@ class StandardVectorRAG:
         documents: List of dicts with 'doc_id', 'title', 'content'.
         """
         chunk_count = 0
+        new_doc_ids = []
+        new_texts = []
+        new_metas = []
+
         for doc in documents:
             doc_id = doc.get("doc_id", "doc")
             title = doc.get("title", "")
@@ -47,12 +51,13 @@ class StandardVectorRAG:
                     "doc_title": title,
                     "text": chunk_text
                 })
-                self.vector_store.add_document(
-                    doc_id=cid,
-                    text=f"{title}\n{chunk_text}",
-                    metadata={"doc_title": title, "text": chunk_text}
-                )
+                new_doc_ids.append(cid)
+                new_texts.append(f"{title}\n{chunk_text}")
+                new_metas.append({"doc_title": title, "text": chunk_text})
                 chunk_count += 1
+
+        if new_doc_ids:
+            self.vector_store.add_documents(new_doc_ids, new_texts, new_metas)
 
         return chunk_count
 

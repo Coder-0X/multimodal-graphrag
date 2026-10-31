@@ -276,7 +276,8 @@ class FinancialTableExtractor:
                     "currency": statement.currency,
                     "scale": item.scale,
                     "category": item.category,
-                    "footnotes": item.footnotes
+                    "footnotes": item.footnotes,
+                    "subtype": "line_item"
                 }
             ))
 
@@ -306,7 +307,7 @@ class FinancialTableExtractor:
                 name=f"{display_name} ({statement.reporting_period})",
                 entity_type="FINANCIAL_METRIC",
                 description=f"Computed ratio {display_name} = {ratio_val}",
-                properties={"ratio": ratio_name, "value": ratio_val, "type": "derived_metric"}
+                properties={"ratio": ratio_name, "value": ratio_val, "subtype": "derived_ratio", "type": "derived_metric"}
             ))
             relations.append(KGRelation(
                 source_id=company_id,

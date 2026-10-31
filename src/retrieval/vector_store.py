@@ -67,27 +67,50 @@ class DenseVectorStore:
             vectors.append(vec / norm)
         return np.array(vectors, dtype=np.float32)
 
-    def add_document(self, doc_id: str, text: str, metadata: Optional[Dict[str, Any]] = None) -> None:
-        """Add a document or chunk to the index."""
-        emb = self.embed_texts([text])  # shape (1, D)
-        self.doc_ids.append(doc_id)
-        self.doc_texts.append(text)
-        self.doc_metadata.append(metadata or {})
+    def add_documents(
+        self,
+        doc_ids: List[str],
+        texts: List[str],
+        metadatas: Optional[List[Dict[str, Any]]] = None
+    ) -> None:
+        """Batch add documents or chunks to the index with a single embedding forward pass."""
+        if not texts:
+            return
+        if metadatas is None:
+            metadatas = [{} for _ in texts]
+        
+        embs = self.embed_texts(texts)  # (B, D) in a single batched pass
+        self.doc_ids.extend(doc_ids)
+        self.doc_texts.extend(texts)
+        self.doc_metadata.extend(metadatas)
 
         if self.embeddings is None:
-            self.embeddings = emb
+            self.embeddings = embs
         else:
-            self.embeddings = np.vstack([self.embeddings, emb])
+            self.embeddings = np.vstack([self.embeddings, embs])
+
+    def add_document(self, doc_id: str, text: str, metadata: Optional[Dict[str, Any]] = None) -> None:
+        """Add a single document or chunk to the index."""
+        self.add_documents([doc_id], [text], [metadata or {}])
+
+    def add_entities(self, entities: List[KGEntity]) -> None:
+        """Batch index Knowledge Graph entities for dense semantic retrieval."""
+        if not entities:
+            return
+        doc_ids = []
+        texts = []
+        metadatas = []
+        for entity in entities:
+            props = " ".join(f"{k}: {v}" for k, v in entity.properties.items() if isinstance(v, (str, int, float)))
+            full_text = f"Entity: {entity.name}. Type: {entity.entity_type}. Description: {entity.description}. Details: {props}"
+            doc_ids.append(entity.id)
+            texts.append(full_text)
+            metadatas.append({"entity": entity.model_dump(), "type": "entity"})
+        self.add_documents(doc_ids=doc_ids, texts=texts, metadatas=metadatas)
 
     def add_entity(self, entity: KGEntity) -> None:
-        """Index a Knowledge Graph entity for dense semantic retrieval."""
-        props = " ".join(f"{k}: {v}" for k, v in entity.properties.items() if isinstance(v, (str, int, float)))
-        full_text = f"Entity: {entity.name}. Type: {entity.entity_type}. Description: {entity.description}. Details: {props}"
-        self.add_document(
-            doc_id=entity.id,
-            text=full_text,
-            metadata={"entity": entity.model_dump(), "type": "entity"}
-        )
+        """Index a single Knowledge Graph entity for dense semantic retrieval."""
+        self.add_entities([entity])
 
     def search(self, query: str, top_k: int = 5) -> List[Tuple[str, float, Dict[str, Any]]]:
         """Perform dense cosine similarity search."""

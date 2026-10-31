@@ -19,7 +19,8 @@ INTENT_EXEMPLARS: Dict[str, List[str]] = {
         "If our AWS cloud hosting commitment liabilities spike due to payment gateway traffic surge, which system components are directly involved?",
         "How do balance sheet cloud obligations correlate with payment gateway microservices and infrastructure costs?",
         "Link financial lease liabilities and operating expenses to cloud hosting and database compute clusters.",
-        "Which physical microservices and ingress gateways are sponsored by our short-term cloud hosting debt commitments?"
+        "Which physical microservices and ingress gateways are sponsored by our short-term cloud hosting debt commitments?",
+        "Which infrastructure cost centers contribute to the short-term operating obligations and financial liabilities?"
     ],
     "FINANCIAL_BALANCE_SHEET_ANALYSIS": [
         "What is the current ratio, quick ratio, and working capital of the company?",

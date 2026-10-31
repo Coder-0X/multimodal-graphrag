@@ -21,7 +21,7 @@ from src.parser import (
     ArchitectureTopology,
 )
 from src.graph import NetworkXGraphStore
-from src.retrieval import SimpleDenseVectorStore, HybridRetriever
+from src.retrieval import DenseVectorStore, SimpleDenseVectorStore, HybridRetriever
 from src.agent import GraphRAGAgent
 from src.pipeline import MultimodalGraphRAGPipeline
 

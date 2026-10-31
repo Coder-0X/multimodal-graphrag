@@ -17,22 +17,54 @@ class SemanticCrossModalLinker:
     and physical cloud infrastructure components (microservices, databases, gateways).
     """
 
-    def __init__(self, vector_store: DenseVectorStore, similarity_threshold: float = 0.48):
+    def __init__(self, vector_store: DenseVectorStore, similarity_threshold: float = 0.48, top_k_per_entity: int = 2):
         self.vector_store = vector_store
         self.similarity_threshold = similarity_threshold
+        self.top_k_per_entity = top_k_per_entity
 
     def discover_cross_modal_links(
         self,
         entities: List[KGEntity]
     ) -> List[KGRelation]:
         """
-        Dynamically discovers and constructs cross-modal relationships
+        Dynamically discovers and constructs high-precision cross-modal relationships
         connecting financial liabilities/assets to infrastructure topologies.
+        Excludes statistical derived ratios and applies top-k nearest neighbor filtering
+        to prevent complete bipartite hairball graphs.
         """
-        financial_entities = [
-            e for e in entities 
-            if e.entity_type == "FINANCIAL_METRIC" or "obligation" in e.name.lower() or "commitment" in e.name.lower() or "lease" in e.name.lower()
-        ]
+        def is_cross_modal_financial_candidate(e: KGEntity) -> bool:
+            if e.entity_type != "FINANCIAL_METRIC":
+                return False
+            if e.properties.get("subtype") == "derived_ratio" or e.properties.get("type") == "derived_metric":
+                return False
+            name_lower = e.name.lower()
+            desc_lower = e.description.lower()
+            category = str(e.properties.get("category", "")).lower()
+
+            # Target commitments, lease obligations, cloud hosting agreements, and capitalized hardware/infrastructure
+            indicator_terms = (
+                "commitment", "obligation", "lease", "cloud", "hosting", "datacenter",
+                "infrastructure", "equipment", "property, plant", "software", "hardware",
+                "service agreement", "aws", "contract", "capital expenditure"
+            )
+            if any(t in name_lower or t in desc_lower for t in indicator_terms):
+                return True
+            if any(c in category for c in ("commitment", "contingenc", "non-current liabilit", "operating lease")):
+                return True
+            return False
+
+        financial_entities = [e for e in entities if is_cross_modal_financial_candidate(e)]
+
+        # Fallback: if no explicit commitment terms match, consider non-ratio balance sheet liabilities/assets
+        if not financial_entities:
+            financial_entities = [
+                e for e in entities 
+                if e.entity_type == "FINANCIAL_METRIC"
+                and e.properties.get("subtype") != "derived_ratio"
+                and e.properties.get("type") != "derived_metric"
+                and any(cat in str(e.properties.get("category", "")).lower() for cat in ("liabilit", "asset", "expense", "operating"))
+            ]
+
         infra_entities = [
             e for e in entities 
             if e.entity_type in ("SYSTEM_COMPONENT", "INFRASTRUCTURE_ZONE")
@@ -62,44 +94,57 @@ class SemanticCrossModalLinker:
         discovered_relations: List[KGRelation] = []
         seen_pairs = set()
 
-        # Pure semantic vector similarity linking via ONNX cosine similarity
+        # Top-k Mutual Nearest Neighbor selection to prevent dense hairball graphs
         for f_idx, fe in enumerate(financial_entities):
-            for i_idx, ie in enumerate(infra_entities):
-                sim = float(sim_matrix[f_idx, i_idx])
-                
-                # Dynamic semantic thresholding (no hardcoded keyword checks)
-                if sim >= self.similarity_threshold:
-                    pair_key = (fe.id, ie.id)
-                    if pair_key in seen_pairs:
-                        continue
-                    seen_pairs.add(pair_key)
+            # Rank infrastructure entities by cosine similarity for this financial metric
+            scores_for_fe = [
+                (i_idx, float(sim_matrix[f_idx, i_idx]))
+                for i_idx, ie in enumerate(infra_entities)
+                if fe.id != ie.id
+            ]
+            scores_for_fe.sort(key=lambda x: x[1], reverse=True)
 
-                    # Infer relation type from ontological domain properties
-                    rel_type, desc = self._infer_relation_type(fe, ie, sim)
+            # Keep top-k candidates meeting the similarity threshold
+            accepted_for_fe = [
+                (i_idx, sim) for i_idx, sim in scores_for_fe[:self.top_k_per_entity]
+                if sim >= self.similarity_threshold
+            ]
 
-                    discovered_relations.append(KGRelation(
-                        source_id=fe.id,
-                        target_id=ie.id,
-                        relation_type=rel_type,
-                        weight=round(sim * 2.0, 2),
-                        description=desc,
-                        evidence_snippet=f"Discovered via dense ONNX semantic resolution (cosine similarity: {sim:.3f})"
-                    ))
+            for i_idx, sim in accepted_for_fe:
+                ie = infra_entities[i_idx]
+                pair_key = (fe.id, ie.id)
+                if pair_key in seen_pairs:
+                    continue
+                seen_pairs.add(pair_key)
+
+                # Infer relation type from ontological domain properties (zero brand hardcoding)
+                rel_type, desc = self._infer_relation_type(fe, ie, sim)
+
+                discovered_relations.append(KGRelation(
+                    source_id=fe.id,
+                    target_id=ie.id,
+                    relation_type=rel_type,
+                    weight=round(sim * 2.0, 2),
+                    description=desc,
+                    evidence_snippet=f"Discovered via dense ONNX semantic resolution (cosine similarity: {sim:.3f})"
+                ))
 
         return discovered_relations
 
     def _infer_relation_type(self, fin: KGEntity, infra: KGEntity, sim: float) -> Tuple[str, str]:
         f_name = fin.name.lower()
         i_name = infra.name.lower()
-        props = infra.properties
+        comp_type = str(infra.properties.get("component_type", "")).lower()
 
-        if "edge" in i_name or "cdn" in i_name or "waf" in i_name:
+        # Edge / Perimeter / CDN
+        if comp_type in ("edge", "cdn", "waf", "load_balancer", "gateway") or any(t in i_name for t in ["edge", "cdn", "waf", "perimeter", "frontdoor", "load balancer"]):
             return (
                 "FUNDS_EDGE_SECURITY",
                 f"Financial line item '{fin.name}' funds network security & CDN perimeter for '{infra.name}'"
             )
-        elif "database" in i_name or "storage" in i_name or "postgres" in i_name or "cloudkit" in i_name:
-            if "lease" in f_name or "asset" in f_name:
+        # Persistence / Storage / Database
+        elif comp_type in ("database", "storage", "datastore", "cache", "data_store") or any(t in i_name for t in ["database", "storage", "sql", "nosql", "datastore", "persistence", "replica", "cache"]):
+            if "lease" in f_name or "asset" in f_name or "equipment" in f_name or "property" in f_name:
                 return (
                     "HOSTS_DATA_ASSET",
                     f"Capitalized asset '{fin.name}' represents physical/lease data infrastructure hosting '{infra.name}'"
@@ -109,7 +154,8 @@ class SemanticCrossModalLinker:
                     "FUNDS_STORAGE_TIER",
                     f"Operating expenditure '{fin.name}' supports storage reliability and replication for '{infra.name}'"
                 )
-        elif "gateway" in i_name or "microservice" in i_name or "orchestrat" in i_name or "cluster" in i_name:
+        # Compute / Microservice / Orchestration
+        elif comp_type in ("microservice", "service", "compute", "orchestrator", "worker", "cluster") or any(t in i_name for t in ["gateway", "microservice", "orchestrat", "cluster", "service", "worker"]):
             return (
                 "FUNDS_COMPUTE_INFRASTRUCTURE",
                 f"Obligations in '{fin.name}' allocate compute capacity and elasticity for microservice '{infra.name}'"

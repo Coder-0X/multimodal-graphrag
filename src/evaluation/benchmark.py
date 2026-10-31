@@ -58,7 +58,7 @@ BENCHMARK_CASES = [
             ("payment orchestrator", ["payment orchestrat", "aws cloud compute commitments"])
         ],
         "expected_cross_modal": True,
-        "min_hops": 1
+        "min_hops": 2
     },
     {
         "id": "Q3_TOPOLOGY_PATH",
