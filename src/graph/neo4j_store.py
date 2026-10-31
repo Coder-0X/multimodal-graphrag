@@ -190,26 +190,66 @@ class Neo4jGraphStore(BaseGraphStore):
 
     def detect_communities(self) -> Dict[int, List[str]]:
         """
-        Detect modular communities via Cypher query clustering nodes by connected component & domain.
+        Detect modular graph communities via Neo4j topology.
+        Attempts GDS Louvain streaming if available; otherwise computes topological connected components
+        via Disjoint-Set Union-Find over live Cypher graph edges.
         """
         if not self._is_active:
             return {}
-        query = """
-            MATCH (n:KGEntity)
-            OPTIONAL MATCH (n)-[r]-(m:KGEntity)
-            WITH n.id AS id, coalesce(n.entity_type, 'GENERAL') AS domain, count(r) AS degree
-            RETURN id, domain
-        """
-        communities: Dict[str, List[str]] = {}
-        with self._driver.session(database=self.database) as session:
-            result = session.run(query)
-            for record in result:
-                dom = record["domain"]
-                if dom not in communities:
-                    communities[dom] = []
-                communities[dom].append(record["id"])
 
-        return {i: node_list for i, node_list in enumerate(communities.values())}
+        with self._driver.session(database=self.database) as session:
+            # 1. Try GDS Louvain if procedure is available
+            try:
+                gds_check = session.run(
+                    "SHOW PROCEDURES YIELD name WHERE name = 'gds.louvain.stream' RETURN count(*) AS cnt"
+                ).single()
+                if gds_check and gds_check["cnt"] > 0:
+                    gds_res = session.run(
+                        "CALL gds.louvain.stream('kgGraph') YIELD nodeId, communityId RETURN gds.util.asNode(nodeId).id AS id, communityId"
+                    )
+                    communities: Dict[int, List[str]] = {}
+                    for record in gds_res:
+                        cid = int(record["communityId"])
+                        communities.setdefault(cid, []).append(record["id"])
+                    if communities:
+                        return communities
+            except Exception:
+                pass
+
+            # 2. Pure Topological Connected Components over live Neo4j edges
+            edge_query = """
+                MATCH (n:KGEntity)
+                OPTIONAL MATCH (n)-[r]-(m:KGEntity)
+                RETURN n.id AS u, m.id AS v
+            """
+            parent: Dict[str, str] = {}
+
+            def find(i: str) -> str:
+                if parent.setdefault(i, i) == i:
+                    return i
+                parent[i] = find(parent[i])
+                return parent[i]
+
+            def union(i: str, j: str):
+                root_i = find(i)
+                root_j = find(j)
+                if root_i != root_j:
+                    parent[root_i] = root_j
+
+            res = session.run(edge_query)
+            for record in res:
+                u = record["u"]
+                v = record["v"]
+                find(u)
+                if v:
+                    union(u, v)
+
+            components: Dict[str, List[str]] = {}
+            for node in list(parent.keys()):
+                root = find(node)
+                components.setdefault(root, []).append(node)
+
+            return {i: members for i, members in enumerate(components.values())}
 
     def calculate_centrality(self) -> Dict[str, float]:
         """

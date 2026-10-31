@@ -11,17 +11,68 @@ from typing import Dict, Any, List, Optional
 import os
 import json
 import httpx
+import numpy as np
+from ..retrieval.vector_store import DenseVectorStore
+
+INTENT_EXEMPLARS: Dict[str, List[str]] = {
+    "CROSS_MODAL_FINANCIAL_INFRASTRUCTURE": [
+        "If our AWS cloud hosting commitment liabilities spike due to payment gateway traffic surge, which system components are directly involved?",
+        "How do balance sheet cloud obligations correlate with payment gateway microservices and infrastructure costs?",
+        "Link financial lease liabilities and operating expenses to cloud hosting and database compute clusters.",
+        "Which physical microservices and ingress gateways are sponsored by our short-term cloud hosting debt commitments?"
+    ],
+    "FINANCIAL_BALANCE_SHEET_ANALYSIS": [
+        "What is the current ratio, quick ratio, and working capital of the company?",
+        "What is the current ratio and quick ratio for this fiscal period?",
+        "Analyze the consolidated balance sheet line items, total assets, cash and cash equivalents, and debt-to-equity leverage ratio.",
+        "Compute liquidity metrics and balance sheet accounting ratios from the 10-K filing."
+    ],
+    "ARCHITECTURE_DEPENDENCY_TRACING": [
+        "Trace the multi-hop dependency path from the User Checkout flow down to the storage tier.",
+        "What is the complete network communication path from API gateway to downstream microservices and database replicas?",
+        "Show directional traffic flow, protocols, and ingress boundaries from web clients to storage.",
+        "Follow the multi-hop service calls from the frontend edge down to the data persistence layer."
+    ],
+    "SYSTEM_FAULT_PROPAGATION": [
+        "What happens if the primary database fails over or there is a secondary replica outage?",
+        "Identify single points of failure, failover risks, and disaster recovery RTO / RPO bounds.",
+        "How does a network outage, traffic surge, or cache failure propagate through downstream services?",
+        "Evaluate single point of failure risk across gateway, queue, and database replicas."
+    ],
+    "GENERAL_MULTIHOP_REASONING": [
+        "Summarize the relationship between entities in the knowledge graph.",
+        "Explain how components and entities associate across the unified graph.",
+        "What are the central hubs and connectivity patterns in the system?"
+    ]
+}
 
 
 class LLMReasoningClient:
     """
     Manages genuine model inference over Knowledge Graph evidence subgraphs.
+    Supports live Gemini / OpenAI APIs or dense ONNX-quantized vector classification and reasoning.
     """
 
-    def __init__(self, api_key: Optional[str] = None, provider: str = "auto"):
+    def __init__(self, api_key: Optional[str] = None, provider: str = "auto", vector_store: Optional[DenseVectorStore] = None):
         self.gemini_key = api_key or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
         self.openai_key = os.getenv("OPENAI_API_KEY")
         self.provider = provider
+        self.vector_store = vector_store or DenseVectorStore()
+        
+        # Precompute dense intent exemplar centroids using FastEmbed ONNX
+        self._intent_names = list(INTENT_EXEMPLARS.keys())
+        self._intent_centroids = self._precompute_intent_centroids()
+
+    def _precompute_intent_centroids(self) -> np.ndarray:
+        """Computes unit-normalized centroid vectors for all intent classes using ONNX embeddings."""
+        centroids = []
+        for name in self._intent_names:
+            texts = INTENT_EXEMPLARS[name]
+            embs = self.vector_store.embed_texts(texts)
+            c = embs.mean(axis=0)
+            norm = np.linalg.norm(c) or 1.0
+            centroids.append(c / norm)
+        return np.array(centroids, dtype=np.float32)
 
     @property
     def is_live_llm(self) -> bool:
@@ -29,7 +80,8 @@ class LLMReasoningClient:
 
     def classify_intent(self, query: str) -> Dict[str, Any]:
         """
-        Classifies query intent and strategy via live LLM or semantic anchor vector embedding.
+        Classifies query intent and strategy via live LLM or dense ONNX vector cosine similarity.
+        Zero hardcoded keyword lists.
         """
         if self.gemini_key and (self.provider in ("auto", "gemini")):
             url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={self.gemini_key}"
@@ -51,28 +103,31 @@ class LLMReasoningClient:
             except Exception:
                 pass
 
-        # Semantic anchor classification (Local Engine)
-        q_lower = query.lower()
-        has_fin = any(w in q_lower for w in ["ratio", "asset", "liabilit", "balance", "capital", "cash", "debt", "equity", "expense", "commitment"])
-        has_infra = any(w in q_lower for w in ["gateway", "service", "traffic", "db", "database", "postgres", "redis", "kafka", "edge", "cloud", "vpc"])
-        has_trace = any(w in q_lower for w in ["trace", "path", "down to", "spof", "dependency", "single point"])
-        has_fault = any(w in q_lower for w in ["failover", "spike", "outage", "bottleneck", "rpo", "rto", "redundancy"])
+        # Dense ONNX semantic vector classification (Pure mathematical cosine similarity)
+        q_emb = self.vector_store.embed_texts([query])[0]
+        sims = self._intent_centroids @ q_emb
+        best_idx = int(sims.argmax())
+        intent = self._intent_names[best_idx]
 
-        if has_fin and has_infra:
-            intent = "CROSS_MODAL_FINANCIAL_INFRASTRUCTURE"
-        elif has_trace:
-            intent = "ARCHITECTURE_DEPENDENCY_TRACING"
-        elif has_fault:
-            intent = "SYSTEM_FAULT_PROPAGATION"
-        elif has_fin:
-            intent = "FINANCIAL_BALANCE_SHEET_ANALYSIS"
-        else:
-            intent = "GENERAL_MULTIHOP_REASONING"
+        # Extract semantic target concepts from significant query tokens
+        stopwords = {
+            "what", "which", "where", "when", "does", "from", "down", "with",
+            "that", "this", "these", "those", "into", "their", "there", "about"
+        }
+        raw_tokens = [w.strip("?,.:;\"'()[]") for w in query.split()]
+        target_concepts = [w for w in raw_tokens if len(w) > 3 and w.lower() not in stopwords]
+
+        requires_multi_hop = intent in (
+            "CROSS_MODAL_FINANCIAL_INFRASTRUCTURE",
+            "ARCHITECTURE_DEPENDENCY_TRACING",
+            "SYSTEM_FAULT_PROPAGATION"
+        )
 
         return {
             "intent": intent,
-            "target_concepts": [w for w in q_lower.split() if len(w) > 3],
-            "requires_multi_hop": has_trace or (has_fin and has_infra)
+            "target_concepts": target_concepts,
+            "requires_multi_hop": requires_multi_hop,
+            "confidence": round(float(sims[best_idx]), 3)
         }
 
     def generate_synthesis(

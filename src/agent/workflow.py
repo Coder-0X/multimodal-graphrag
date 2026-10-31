@@ -123,16 +123,19 @@ class GraphRAGAgent:
             else:
                 reasoning.append(f"No bridging path found yet at hop {hop_count + 1}; expanding neighborhood...")
         elif intent == "ARCHITECTURE_DEPENDENCY_TRACING":
-            # Check if any storage tier or terminal DB node is reached
-            has_db = any(
-                "postgres" in e.get("id", "").lower() or "storage" in e.get("properties", {}).get("zone", "").lower()
+            # Domain-agnostic check: verify if the traversal has reached a persistent storage tier or terminal sink
+            terminal_types = {"database", "storage", "datastore", "cache", "data_store", "sink"}
+            has_persistence = any(
+                e.get("properties", {}).get("component_type", "").lower() in terminal_types
+                or any(term in e.get("name", "").lower() for term in ["database", "storage", "postgres", "mysql", "aurora", "dynamo", "redis", "mongo", "data store"])
+                or any(term in e.get("properties", {}).get("zone", "").lower() for term in ["storage", "persistence", "stateful", "data"])
                 for e in state["retrieved_subgraph_entities"]
             )
-            if has_db and (bridging_paths or hop_count >= 1):
+            if has_persistence and (bridging_paths or hop_count >= 1):
                 is_sufficient = True
-                reasoning.append("Multi-hop topology trace successfully reached the stateful storage tier.")
+                reasoning.append("Multi-hop topology trace successfully reached the stateful persistence tier.")
             else:
-                reasoning.append(f"Tracing downstream path towards storage tier (currently at hop {hop_count + 1})...")
+                reasoning.append(f"Tracing downstream path towards persistence tier (currently at hop {hop_count + 1})...")
         elif len(relations) >= 8:
             is_sufficient = True
             reasoning.append("Sufficient domain entities retrieved.")

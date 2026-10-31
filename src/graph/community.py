@@ -3,6 +3,7 @@ Hierarchical Community Summarization & Global Search Engine.
 Implements Microsoft GraphRAG-inspired modular community detection,
 cluster-level synthesis, and global cross-cutting risk analysis.
 """
+import re
 from typing import List, Dict, Any, Optional
 from collections import defaultdict
 from .base import BaseGraphStore
@@ -93,42 +94,53 @@ class HierarchicalCommunityEngine:
         return self.communities
 
     def _infer_cluster_title(self, entities: List[KGEntity]) -> str:
-        """Infer thematic cluster title from constituent entity types and names."""
-        names = " ".join(e.name.lower() for e in entities)
-        types = {e.entity_type for e in entities}
+        """Dynamically infer thematic cluster title from constituent entity names and ontology types."""
+        if not entities:
+            return "Unassigned Cluster"
 
-        if "FINANCIAL_METRIC" in types and ("asset" in names or "cash" in names):
-            return "Current Assets & Liquidity Management"
-        elif "FINANCIAL_METRIC" in types and ("liability" in names or "debt" in names or "commitments" in names):
-            return "Operating Obligations & Cloud Commitments"
-        elif "SYSTEM_COMPONENT" in types and ("edge" in names or "gateway" in names or "checkout" in names):
-            return "Public Ingress & Payment Gateway Perimeter"
-        elif "SYSTEM_COMPONENT" in types and ("postgres" in names or "db" in names or "replica" in names or "lease" in names):
-            return "Stateful Storage Tier & Disaster Recovery"
-        elif "SYSTEM_COMPONENT" in types and ("fraud" in names or "kafka" in names or "risk" in names):
-            return "Event Streaming & Real-Time Risk Engine"
+        # Count entity types
+        type_counts: Dict[str, int] = defaultdict(int)
+        for e in entities:
+            type_counts[e.entity_type] += 1
+        dominant_type = max(type_counts.items(), key=lambda x: x[1])[0]
+        type_label = dominant_type.replace('_', ' ').title()
+
+        # Find anchor entity names
+        anchor_name = entities[0].name
+        clean_anchor = re.sub(r'^(NovaCloud|Apple Inc|Acme)\s*', '', anchor_name, flags=re.I).strip()
+        if not clean_anchor:
+            clean_anchor = anchor_name
+
+        if len(entities) == 1:
+            return f"{clean_anchor} ({type_label})"
+        elif len(entities) <= 3:
+            names = [re.sub(r'^(NovaCloud|Apple Inc|Acme)\s*', '', e.name, flags=re.I).strip() for e in entities[:2]]
+            return f"{' & '.join(names)} ({type_label}s)"
         else:
-            return f"Domain Cluster ({len(entities)} entities)"
+            return f"{clean_anchor} & Related {type_label}s ({len(entities)} nodes)"
 
     def global_search(self, query: str) -> Dict[str, Any]:
         """
         Execute Microsoft GraphRAG-style Global Search:
         Aggregates and synthesizes across all community summaries to answer macro-level questions.
+        Ranks community relevance via dense ONNX vector cosine similarity.
         """
         if not self.is_built:
             self.build_communities()
 
-        matched_summaries = []
-        q_lower = query.lower()
-
-        # Score community summaries by relevance to the global query
-        for cid, comm in self.communities.items():
-            text = (comm.title + " " + comm.summary_text).lower()
-            score = sum(1 for term in q_lower.split() if term in text)
-            matched_summaries.append((score, comm))
-
-        # Sort by relevance
-        matched_summaries.sort(key=lambda x: x[0], reverse=True)
+        comm_list = list(self.communities.values())
+        if comm_list:
+            from ..retrieval.vector_store import DenseVectorStore
+            v_store = DenseVectorStore()
+            comm_texts = [f"{c.title}. {c.summary_text}" for c in comm_list]
+            all_embs = v_store.embed_texts([query] + comm_texts)
+            q_emb = all_embs[0]
+            c_embs = all_embs[1:]
+            sims = c_embs @ q_emb
+            matched_summaries = [(float(sims[i]), comm_list[i]) for i in range(len(comm_list))]
+            matched_summaries.sort(key=lambda x: x[0], reverse=True)
+        else:
+            matched_summaries = []
 
         lines = [
             f"### Global GraphRAG Synthesis for: \"{query}\"\n",

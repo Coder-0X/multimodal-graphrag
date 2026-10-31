@@ -89,32 +89,41 @@ class BenchmarkRunner:
         # 1. Ingest into GraphRAG
         stats = self.graphrag.ingest_documents()
         
-        # 2. Ingest realistic modular enterprise document chunks into Standard RAG
-        # Real-world enterprise docs are distributed across separate sections/pages.
-        enterprise_chunks = [
-            {"doc_id": "doc_sec_1", "title": "Section 1: Frontend Ingress", "content": "The User Checkout Web Frontend allows mobile and browser clients to initiate checkout payment transactions over HTTPS."},
-            {"doc_id": "doc_sec_2", "title": "Section 2: Edge CDN & WAF", "content": "Cloudflare Global CDN & WAF provides edge rate limiting, DDoS defense, and mTLS forwarding to origin."},
-            {"doc_id": "doc_sec_3", "title": "Section 3: Ingress Gateway", "content": "Kong Ingress API Gateway performs OAuth2 token verification and routes traffic via gRPC."},
-            {"doc_id": "doc_sec_4", "title": "Section 4: Payment Core", "content": "Payment Orchestration Microservice executes core payment workflows under Kubernetes HPA. Cost Center: AWS Cloud Compute Commitments."},
-            {"doc_id": "doc_sec_5", "title": "Section 5: Session Cache", "content": "Redis In-Memory Session Cache maintains idempotency tokens and active user checkout sessions."},
-            {"doc_id": "doc_sec_6", "title": "Section 6: Fraud Detection", "content": "Real-Time Fraud & Risk Engine evaluates transaction risk scores via gRPC with 15ms latency."},
-            {"doc_id": "doc_sec_7", "title": "Section 7: Event Bus", "content": "Kafka Event Streaming Backbone ingests PaymentAuthorized events across partitioned broker clusters."},
-            {"doc_id": "doc_sec_8", "title": "Section 8: Database Storage", "content": "PostgreSQL Multi-Region Primary DB stores transaction ledgers with zero RPO on AWS Aurora."},
-            {"doc_id": "doc_sec_9", "title": "Section 9: Disaster Recovery", "content": "PostgreSQL Secondary Failover Replica streams WAL asynchronously with a 30-second RTO."},
-            {"doc_id": "doc_sec_10", "title": "Section 10: Hybrid Link", "content": "AWS Direct Connect Failover Broker provides 10 Gbps redundant cross-connects."},
-            {"doc_id": "doc_sec_11", "title": "10-K Balance Sheet: Assets", "content": "NovaCloud Global Inc. Total Current Assets: $42,500,000 thousand, including Cash of $14,850,000 thousand and Marketable Securities of $9,200,000 thousand."},
-            {"doc_id": "doc_sec_12", "title": "10-K Balance Sheet: Liabilities", "content": "Total Current Liabilities: $18,700,000 thousand, including Accounts Payable of $5,200,000 thousand and Accrued Expenses of $10,050,000 thousand."},
-            {"doc_id": "doc_sec_13", "title": "10-K Footnote: Cloud Obligations", "content": "Note 8: Cloud Hosting Commitments and Short-Term Obligations of $3,450,000 thousand fund AWS and Cloudflare compute for Payment Processing."}
+        # 2. Ingest authentic enterprise documents into Standard Vector RAG
+        # Rather than toy 1-sentence snippets, Standard Vector RAG indexes the complete
+        # raw Form 10-K balance sheet and the complete architecture system specification.
+        arch_descriptions = []
+        for n in self.graphrag.topology.nodes:
+            desc = n.properties.get("description", n.name)
+            arch_descriptions.append(
+                f"Component: {n.name} (Type: {n.component_type}, Zone: {n.zone}). {desc}. Configuration: {n.properties}"
+            )
+        for e in self.graphrag.topology.edges:
+            arch_descriptions.append(
+                f"Network Link: {e.description} (Protocol: {e.protocol}, Mode: {e.sync_mode})"
+            )
+
+        full_enterprise_docs = [
+            {
+                "doc_id": "doc_sec_10k_balance_sheet",
+                "title": f"SEC Form 10-K: Consolidated Balance Sheet ({self.graphrag.statement.company_name})",
+                "content": self.graphrag.statement.raw_markdown or ""
+            },
+            {
+                "doc_id": "doc_system_architecture",
+                "title": f"Cloud System Architecture Specification ({self.graphrag.topology.system_name})",
+                "content": "\n\n".join(arch_descriptions)
+            }
         ]
-        self.standard_rag.ingest_raw_documents(enterprise_chunks)
+        self.standard_rag.ingest_raw_documents(full_enterprise_docs)
 
     def evaluate_case(self, case: Dict[str, Any]) -> Dict[str, Any]:
         q = case["query"]
         required_specs = case["required_entities"]
         
-        # --- Evaluate Standard Vector RAG ---
+        # --- Evaluate Standard Vector RAG (top_k=5 realistic enterprise setting) ---
         t0 = time.perf_counter()
-        v_res = self.standard_rag.retrieve(q, top_k=3)
+        v_res = self.standard_rag.retrieve(q, top_k=5)
         v_time = (time.perf_counter() - t0) * 1000
         v_context = v_res["assembled_context"].lower()
         

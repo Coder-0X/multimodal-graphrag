@@ -4,7 +4,7 @@ Integrates vector similarity search with graph traversal (k-hop expansion and pa
 to assemble comprehensive multi-hop evidence packages.
 """
 from typing import List, Dict, Any, Tuple, Optional
-from .vector_store import SimpleDenseVectorStore
+from .vector_store import DenseVectorStore
 from ..graph.base import BaseGraphStore
 from ..parser.schemas import KGEntity, KGRelation
 
@@ -12,7 +12,7 @@ from ..parser.schemas import KGEntity, KGRelation
 class HybridRetriever:
     """Combines vector similarity search with knowledge graph traversal."""
 
-    def __init__(self, vector_store: SimpleDenseVectorStore, graph_store: BaseGraphStore):
+    def __init__(self, vector_store: DenseVectorStore, graph_store: BaseGraphStore):
         self.vector_store = vector_store
         self.graph_store = graph_store
 

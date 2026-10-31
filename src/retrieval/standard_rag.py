@@ -5,7 +5,7 @@ to provide a rigorous, empirical baseline for multi-hop evaluation against Graph
 """
 from typing import List, Dict, Any, Tuple
 import re
-from .vector_store import SimpleDenseVectorStore
+from .vector_store import DenseVectorStore
 
 
 class StandardVectorRAG:
@@ -19,7 +19,7 @@ class StandardVectorRAG:
     def __init__(self, chunk_size: int = 180, chunk_overlap: int = 30):
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
-        self.vector_store = SimpleDenseVectorStore()
+        self.vector_store = DenseVectorStore()
         self.chunks: List[Dict[str, Any]] = []
 
     def ingest_raw_documents(self, documents: List[Dict[str, str]]) -> int:
