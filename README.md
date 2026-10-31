@@ -92,30 +92,35 @@ multimodal-graphrag/
 │   │   ├── base.py             # Abstract BaseGraphStore interface
 │   │   ├── networkx_store.py   # In-memory graph engine (PageRank, Louvain)
 │   │   ├── neo4j_store.py      # Production Neo4j Cypher connector
+│   │   ├── entity_resolution.py# Semantic Cross-Modal Linker (dense vector cosine resolution)
 │   │   └── community.py        # Hierarchical Community Detection & Global Search
 │   ├── retrieval/
-│   │   ├── vector_store.py     # Subword & TF-IDF dense vector store
+│   │   ├── vector_store.py     # Dense ONNX vector store (fastembed BAAI/bge-small-en-v1.5)
 │   │   ├── standard_rag.py     # Traditional chunked vector baseline
 │   │   └── hybrid_retriever.py # Hybrid Vector + Graph Traversal engine
 │   ├── agent/
 │   │   ├── state.py            # LangGraph agent state typing
+│   │   ├── llm_client.py       # Live LLM (Gemini 2.0 / GPT-4o) + Extractive Graph Reasoner
 │   │   └── workflow.py         # Stateful multi-hop reasoning state machine
 │   ├── evaluation/
 │   │   └── benchmark.py        # Empirical comparison suite (Vector vs GraphRAG)
 │   └── pipeline.py             # Unified end-to-end orchestrator
 └── tests/
-    └── test_pipeline.py        # Automated 7-suite test pipeline
+    └── test_pipeline.py        # Automated 12-suite comprehensive test pipeline
 ```
 
 ---
 
 ## 🚀 Quick Start
 
-### 1. Activate Environment
+### 1. Clone & Set Up Environment
 
 ```bash
-cd "C:\Users\NITRO V 15\.gemini\antigravity\scratch\multimodal-graphrag"
-.\.venv\Scripts\activate
+git clone https://github.com/Coder-0X/multimodal-graphrag.git
+cd multimodal-graphrag
+python -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+pip install -r requirements.txt
 ```
 
 ### 2. Launch the Interactive Visual Graph Explorer
