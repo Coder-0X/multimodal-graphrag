@@ -244,17 +244,136 @@ def test_semantic_cross_modal_linker():
     assert any("FUNDS" in t or "HOSTS" in t or "ASSOCIATED" in t for t in rel_types)
 
 
+def test_hipporag_and_steiner_tree():
+    """Validates HippoRAG Personalized PageRank and Steiner Minimal Tree subgraph extraction."""
+    pipeline = MultimodalGraphRAGPipeline(use_neo4j=False)
+    pipeline.ingest_documents()
+
+    # 1. Test HippoRAG Personalized PageRank
+    seed_weights = {
+        "comp_kong_gateway": 0.9,
+        "comp_payment_orchestrator": 0.7
+    }
+    ppr_scores = pipeline.nx_store.personalized_pagerank(seed_weights, alpha=0.85)
+    assert len(ppr_scores) > 0
+    assert "comp_kong_gateway" in ppr_scores
+    assert ppr_scores["comp_kong_gateway"] > 0
+    total_ppr = sum(ppr_scores.values())
+    assert 0.95 <= total_ppr <= 1.05
+
+    # 2. Test Steiner Minimal Tree Subgraph Extraction
+    terminals = ["comp_kong_gateway", "comp_postgres_primary"]
+    st_entities, st_relations = pipeline.nx_store.extract_steiner_subgraph(terminals, operational_only=True)
+    assert len(st_entities) >= 2
+    st_ids = {e.id for e in st_entities}
+    assert "comp_kong_gateway" in st_ids
+    assert "comp_postgres_primary" in st_ids
+    assert len(st_relations) >= 1
+
+
+    # 3. Test HybridRetriever with HippoRAG and Steiner Tree enabled
+    retrieval_res = pipeline.retriever.retrieve(
+        "Which microservices handle payment ingress and database persistence?",
+        top_k_seeds=3,
+        use_hipporag=True,
+        use_steiner_tree=True
+    )
+    assert "hipporag_activation" in retrieval_res
+    assert len(retrieval_res["hipporag_activation"]) > 0
+
+
+def test_ast_diagram_parser():
+    """Validates compiler-grade AST diagram parsing with nested subgraphs, node shapes, and arrow chaining."""
+    from src.parser.diagram_extractor import DiagramASTParser
+
+    mermaid_code = """
+    subgraph DMZ_Perimeter ["DMZ Ingress Zone"]
+        client[Web Client] -->|HTTPS| gw[(Kong Gateway)]
+    end
+    subgraph Core_VPC ["Microservices Core"]
+        gw ==>|gRPC Sync| orch([Payment Orchestrator])
+        orch -.->|Kafka Event| audit{{Audit Consumer}}
+    end
+    """
+    topo = DiagramASTParser.parse(mermaid_code, system_name="AST Test System")
+    assert len(topo.nodes) == 4
+    node_by_id = {n.id: n for n in topo.nodes}
+
+    assert "client" in node_by_id
+    assert "gw" in node_by_id
+    assert "orch" in node_by_id
+    assert "audit" in node_by_id
+
+    # Verify zone scopes
+    assert node_by_id["client"].zone == "DMZ Ingress Zone"
+    assert node_by_id["gw"].zone == "DMZ Ingress Zone"
+    assert node_by_id["orch"].zone == "Microservices Core"
+    assert node_by_id["audit"].zone == "Microservices Core"
+
+    # Verify shapes
+    assert node_by_id["gw"].properties.get("shape") == "cylinder"
+    assert node_by_id["orch"].properties.get("shape") == "stadium"
+    assert node_by_id["audit"].properties.get("shape") == "hexagon"
+
+    # Verify edge metadata
+    assert len(topo.edges) == 3
+    edge_map = {(e.source_id, e.target_id): e for e in topo.edges}
+    assert ("client", "gw") in edge_map
+    assert ("gw", "orch") in edge_map
+    assert ("orch", "audit") in edge_map
+
+    assert edge_map[("gw", "orch")].is_critical_path is True
+    assert edge_map[("orch", "audit")].sync_mode == "async"
+
+
+def test_wilcoxon_and_bootstrap_stats():
+    """Validates Wilcoxon Signed-Rank Test and Bootstrap Confidence Interval calculations."""
+    from src.evaluation.benchmark import compute_wilcoxon_signed_rank, compute_bootstrap_confidence_interval
+
+    std_recalls = [50.0, 60.0, 70.0, 55.0, 40.0, 65.0, 80.0, 50.0, 45.0, 70.0]
+    graph_recalls = [90.0, 100.0, 95.0, 85.0, 80.0, 95.0, 100.0, 90.0, 85.0, 100.0]
+
+    wilc = compute_wilcoxon_signed_rank(std_recalls, graph_recalls)
+    assert wilc["p_value"] < 0.01
+    assert wilc["W_plus"] > wilc["W_minus"]
+
+    deltas = [g - s for g, s in zip(graph_recalls, std_recalls)]
+    ci_low, ci_high = compute_bootstrap_confidence_interval(deltas, n_resamples=1000, ci=0.95)
+    assert ci_low > 20.0
+    assert ci_high > ci_low
+
+
 if __name__ == "__main__":
     test_financial_table_extractor()
+    print("✓ test_financial_table_extractor passed", flush=True)
     test_architecture_diagram_extractor()
+    print("✓ test_architecture_diagram_extractor passed", flush=True)
     test_networkx_graph_store()
+    print("✓ test_networkx_graph_store passed", flush=True)
     test_hybrid_retriever()
+    print("✓ test_hybrid_retriever passed", flush=True)
     test_langgraph_multi_hop_agent()
+    print("✓ test_langgraph_multi_hop_agent passed", flush=True)
     test_hierarchical_community_engine()
+    print("✓ test_hierarchical_community_engine passed", flush=True)
     test_benchmark_runner()
+    print("✓ test_benchmark_runner passed", flush=True)
     test_apple_showcase_ingestion()
+    print("✓ test_apple_showcase_ingestion passed", flush=True)
     test_dynamic_table_text_parser()
+    print("✓ test_dynamic_table_text_parser passed", flush=True)
     test_dynamic_diagram_text_parser()
+    print("✓ test_dynamic_diagram_text_parser passed", flush=True)
     test_dense_vector_store()
+    print("✓ test_dense_vector_store passed", flush=True)
     test_semantic_cross_modal_linker()
-    print("All 12 test suites passed successfully!")
+    print("✓ test_semantic_cross_modal_linker passed", flush=True)
+    test_hipporag_and_steiner_tree()
+    print("✓ test_hipporag_and_steiner_tree passed", flush=True)
+    test_ast_diagram_parser()
+    print("✓ test_ast_diagram_parser passed", flush=True)
+    test_wilcoxon_and_bootstrap_stats()
+    print("✓ test_wilcoxon_and_bootstrap_stats passed", flush=True)
+    print("All 15 test suites passed successfully!", flush=True)
+
+

@@ -4,26 +4,251 @@ Parses system components, boundary zones, protocols, and data flow topologies
 into Knowledge Graph entities and directed relationships.
 """
 import re
-from typing import List, Tuple, Dict, Any, Set
+from typing import List, Tuple, Dict, Any, Set, Optional
+from dataclasses import dataclass, field
 from .schemas import ArchitectureTopology, DiagramNode, DiagramEdge, KGEntity, KGRelation
 
 
+# ---------------------------------------------------------------------------
+# Formal Abstract Syntax Tree (AST) Data Structures for Architecture Diagrams
+# ---------------------------------------------------------------------------
+
+@dataclass
+class ASTNode:
+    id: str
+    name: str
+    shape: str = "rectangle"
+    zone: str = "Default Zone"
+    component_type: str = "microservice"
+    properties: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class ASTEdge:
+    source_id: str
+    target_id: str
+    protocol: str = "HTTPS"
+    sync_mode: str = "sync"
+    arrow_style: str = "solid"  # solid, dotted, thick, bidirectional
+    is_critical_path: bool = False
+    description: Optional[str] = None
+
+
+@dataclass
+class ASTSubgraph:
+    zone_id: str
+    title: str
+    parent_zone: Optional[str] = None
+    nodes: List[str] = field(default_factory=list)
+
+
+class DiagramASTParser:
+    """
+    Compiler-grade Lexer and Abstract Syntax Tree (AST) Parser for Mermaid,
+    Graphviz DOT, and architecture flowchart specifications.
+    Supports nested subgraphs, node shape tokens, arrow syntax variations,
+    and multi-node chaining (A --> B --> C).
+    """
+
+    SHAPE_PATTERNS = [
+        (r'\[\(([^\)]+)\)\]', "cylinder"),       # [(Database)]
+        (r'\[\[([^\]]+)\]\]', "subroutine"),     # [[Subroutine]]
+        (r'\(\[([^\]]+)\]\)', "stadium"),        # ([Stadium])
+        (r'\(\(([^\)]+)\)\)', "circle"),         # ((Circle))
+        (r'\{\{([^\}]+)\}\}', "hexagon"),        # {{Hexagon}}
+        (r'\{([^\}]+)\}', "rhombus"),            # {Decision}
+        (r'\[\/([^\/]+)\/\]', "parallelogram"),  # [/Data/]
+        (r'\(([^\)]+)\)', "rounded"),            # (Rounded)
+        (r'\[([^\]]+)\]', "rectangle"),          # [Rectangle]
+    ]
+
+    ARROW_REGEX = re.compile(
+        r'(\s*(?:<==>|<-->|==>|-.->|-->|->|---|--)\s*(?:\|([^|]+)\|)?\s*)'
+    )
+
+    @classmethod
+    def clean_text(cls, text: str) -> str:
+        s = text.strip()
+        while len(s) >= 2 and (
+            (s.startswith('"') and s.endswith('"')) or
+            (s.startswith("'") and s.endswith("'")) or
+            (s.startswith('`') and s.endswith('`'))
+        ):
+            s = s[1:-1].strip()
+        return s
+
+    @classmethod
+    def parse_node_token(cls, token: str) -> Tuple[str, str, str]:
+        """
+        Parses a node token into (node_id, display_name, shape).
+        e.g., 'db[(PostgreSQL Cluster)]' -> ('db', 'PostgreSQL Cluster', 'cylinder')
+        """
+        token = token.strip()
+        for pattern, shape in cls.SHAPE_PATTERNS:
+            m = re.search(r'^([a-zA-Z0-9_\-]+)' + pattern + r'$', token)
+            if m:
+                nid = m.group(1).strip().lower()
+                nlabel = cls.clean_text(m.group(2).strip())
+                return nid, nlabel, shape
+
+        # Standalone identifier without delimiter
+        clean_id = re.sub(r'[^a-zA-Z0-9_\-]', '', token).strip().lower()
+        return clean_id, clean_id.replace('_', ' ').title(), "rectangle"
+
+    @classmethod
+    def parse(cls, raw_text: str, system_name: str = "Parsed Architecture Topology") -> ArchitectureTopology:
+        nodes_dict: Dict[str, ASTNode] = {}
+        edges: List[ASTEdge] = []
+        zones: Set[str] = set()
+
+        # Subgraph lexical scope stack
+        scope_stack: List[str] = ["Default Zone"]
+
+        lines = raw_text.splitlines()
+        for line in lines:
+            line_str = line.strip()
+            # Ignore comments and diagram declarations
+            if not line_str or line_str.startswith("%%") or line_str.startswith("```") or line_str.lower().startswith("flowchart") or line_str.lower().startswith("graph"):
+                continue
+
+            # Subgraph opening
+            sub_m = re.match(r'subgraph\s+([a-zA-Z0-9_\-]+)?\s*(?:\[([^\]]+)\]|["\']([^"\']+)["\'])?', line_str, re.IGNORECASE)
+            if sub_m:
+                zone_title = sub_m.group(2) or sub_m.group(3) or sub_m.group(1) or "Perimeter Zone"
+                zone_title = cls.clean_text(zone_title)
+                zones.add(zone_title)
+                scope_stack.append(zone_title)
+                continue
+
+            # Subgraph closure
+            if line_str.lower() == "end":
+                if len(scope_stack) > 1:
+                    scope_stack.pop()
+                continue
+
+            current_zone = scope_stack[-1]
+
+            # Check for Arrow Edges (including multi-segment chains: A --> B --> C)
+            arrow_matches = list(cls.ARROW_REGEX.finditer(line_str))
+            if arrow_matches:
+                # Split line by arrows to extract node expressions
+                node_exprs: List[str] = []
+                last_idx = 0
+                arrow_specs: List[Tuple[str, str]] = []  # (arrow_type, protocol)
+
+                for am in arrow_matches:
+                    node_exprs.append(line_str[last_idx:am.start()].strip())
+                    raw_arrow = am.group(1).strip()
+                    proto = am.group(2) or ""
+
+                    # Protocol embedded in arrow? e.g. -- HTTPS -->
+                    if not proto:
+                        inner_p = re.search(r'--\s*([A-Za-z0-9_\-\/\s]+)\s*-->', raw_arrow)
+                        if inner_p:
+                            proto = inner_p.group(1).strip()
+
+                    arrow_specs.append((raw_arrow, proto))
+                    last_idx = am.end()
+
+                node_exprs.append(line_str[last_idx:].strip())
+
+                # Resolve all nodes in chain
+                parsed_nodes: List[ASTNode] = []
+                for n_expr in node_exprs:
+                    if not n_expr:
+                        continue
+                    nid, nlabel, shape = cls.parse_node_token(n_expr)
+                    if not nid:
+                        continue
+                    if nid not in nodes_dict:
+                        ast_node = ASTNode(
+                            id=nid,
+                            name=nlabel,
+                            shape=shape,
+                            zone=current_zone,
+                            component_type=ArchitectureDiagramExtractor._infer_component_type(nlabel)
+                        )
+                        nodes_dict[nid] = ast_node
+                    else:
+                        # Update label if token had an explicit shape and name
+                        if nlabel != nid.replace('_', ' ').title():
+                            nodes_dict[nid].name = nlabel
+                            nodes_dict[nid].component_type = ArchitectureDiagramExtractor._infer_component_type(nlabel)
+                            nodes_dict[nid].shape = shape
+                    parsed_nodes.append(nodes_dict[nid])
+
+                # Link consecutive pairs along the arrow chain
+                for i in range(len(arrow_specs)):
+                    if i < len(parsed_nodes) - 1:
+                        src_ast = parsed_nodes[i]
+                        tgt_ast = parsed_nodes[i + 1]
+                        arr_token, proto_label = arrow_specs[i]
+
+                        protocol = proto_label or "HTTPS"
+                        is_critical = "==>" in arr_token
+                        is_async = "-.->" in arr_token or any(q in protocol.lower() for q in ["kafka", "queue", "event", "amqp", "pubsub", "async"])
+
+                        edges.append(ASTEdge(
+                            source_id=src_ast.id,
+                            target_id=tgt_ast.id,
+                            protocol=protocol,
+                            sync_mode="async" if is_async else "sync",
+                            arrow_style="dotted" if "-.->" in arr_token else ("thick" if "==>" in arr_token else "solid"),
+                            is_critical_path=is_critical,
+                            description=f"Connects {src_ast.name} to {tgt_ast.name} via {protocol}"
+                        ))
+                continue
+
+            # Standalone Node definition inside subgraph (e.g. node_id[Name])
+            if any(sym in line_str for sym in ["[", "(", "{"]):
+                nid, nlabel, shape = cls.parse_node_token(line_str)
+                if nid and nid not in nodes_dict:
+                    nodes_dict[nid] = ASTNode(
+                        id=nid,
+                        name=nlabel,
+                        shape=shape,
+                        zone=current_zone,
+                        component_type=ArchitectureDiagramExtractor._infer_component_type(nlabel)
+                    )
+
+        # Convert AST structures to ArchitectureTopology
+        topo_nodes: List[DiagramNode] = []
+        for n in nodes_dict.values():
+            topo_nodes.append(DiagramNode(
+                id=n.id,
+                name=n.name,
+                component_type=n.component_type,
+                zone=n.zone,
+                properties={"shape": n.shape, "zone": n.zone}
+            ))
+
+        topo_edges: List[DiagramEdge] = []
+        for e in edges:
+            topo_edges.append(DiagramEdge(
+                source_id=e.source_id,
+                target_id=e.target_id,
+                protocol=e.protocol,
+                sync_mode=e.sync_mode,
+                is_critical_path=e.is_critical_path,
+                description=e.description
+            ))
+
+        return ArchitectureTopology(
+            system_name=system_name,
+            environment="Production",
+            nodes=topo_nodes,
+            edges=topo_edges,
+            boundary_zones=list(zones) if zones else ["Default Zone"],
+            description=f"AST-compiled topology with {len(topo_nodes)} components and {len(topo_edges)} communication pathways."
+        )
+
+
 class ArchitectureDiagramExtractor:
-    """Extracts nodes, edges, network zones, and protocols from architectural diagrams."""
+    """Extracts nodes, edges, network zones, and protocols from architectural diagrams via AST compiler."""
 
     @staticmethod
     def _clean_label(label: str) -> str:
-        """Strips surrounding brackets, parentheses, and quotes from node labels."""
-        lbl = label.strip()
-        while len(lbl) >= 2 and (
-            (lbl.startswith('(') and lbl.endswith(')')) or
-            (lbl.startswith('[') and lbl.endswith(']')) or
-            (lbl.startswith('{') and lbl.endswith('}')) or
-            (lbl.startswith('"') and lbl.endswith('"')) or
-            (lbl.startswith("'") and lbl.endswith("'"))
-        ):
-            lbl = lbl[1:-1].strip()
-        return lbl
+        return DiagramASTParser.clean_text(label)
 
     @classmethod
     def extract_from_text(
@@ -32,146 +257,11 @@ class ArchitectureDiagramExtractor:
         system_name: str = "Parsed Architecture Topology"
     ) -> ArchitectureTopology:
         """
-        Parses Mermaid diagrams, Graphviz DOT, or text topology flowcharts into ArchitectureTopology.
-        Extracts component nodes, network zones, directional connections, and protocols.
+        Parses Mermaid diagrams, Graphviz DOT, or text topology flowcharts into ArchitectureTopology
+        via formal Abstract Syntax Tree (AST) compilation.
         """
-        nodes_dict: Dict[str, DiagramNode] = {}
-        edges: List[DiagramEdge] = []
-        zones: Set[str] = set()
+        return DiagramASTParser.parse(raw_text=raw_text, system_name=system_name)
 
-        current_zone = "Default Zone"
-
-        # Regex patterns for Mermaid & text flowcharts:
-        # e.g.: node_id[Display Name] -->|Protocol| target_id[Target Name]
-        # or: NodeA -> NodeB (Protocol)
-        mermaid_edge_regex = re.compile(
-            r'([a-zA-Z0-9_\-]+)(?:\[([^\]]+)\]|\(([^\)]+)\)|\{([^\}]+)\})?\s*[-=]+>(?:\|([^|]+)\|)?\s*([a-zA-Z0-9_\-]+)(?:\[([^\]]+)\]|\(([^\)]+)\)|\{([^\}]+)\})?'
-        )
-        standalone_node_regex = re.compile(
-            r'^([a-zA-Z0-9_\-]+)\s*(?:\[(?:\(|\[)?([^\]\)\}]+)(?:\)|\])?\]|\(([^\)]+)\)|\{([^\}]+)\})$'
-        )
-        simple_arrow_regex = re.compile(
-            r'([a-zA-Z0-9_\-\s]+?)\s*[-=]+>\s*([a-zA-Z0-9_\-\s]+?)(?:\s*[\(\[]([A-Za-z0-9_\-\/\s]+)[\)\]])?$'
-        )
-        subgraph_regex = re.compile(r'subgraph\s+["\']?([^"\'\]]+)["\']?', re.IGNORECASE)
-
-        for line in raw_text.splitlines():
-            line_str = line.strip()
-            if not line_str or line_str.startswith("%%") or line_str.startswith("```") or line_str.lower().startswith("flowchart") or line_str.lower().startswith("graph"):
-                continue
-
-            # Detect subgraphs / zones
-            sub_match = subgraph_regex.search(line_str)
-            if sub_match:
-                current_zone = sub_match.group(1).strip()
-                zones.add(current_zone)
-                continue
-            if line_str == "end":
-                current_zone = "Default Zone"
-                continue
-
-            # Check standalone node definition inside zone
-            s_match = standalone_node_regex.match(line_str)
-            if s_match and not ("-->" in line_str or "->" in line_str):
-                nid = s_match.group(1).strip().lower()
-                nraw = s_match.group(2) or s_match.group(3) or s_match.group(4) or nid.replace('_', ' ').title()
-                nname = cls._clean_label(nraw)
-                nodes_dict[nid] = DiagramNode(
-                    id=nid,
-                    name=nname,
-                    component_type=cls._infer_component_type(nname),
-                    zone=current_zone
-                )
-                continue
-
-            # 1. Try Mermaid edge match
-            m_match = mermaid_edge_regex.search(line_str)
-            if m_match:
-                src_id = m_match.group(1).strip().lower()
-                src_raw = m_match.group(2) or m_match.group(3) or m_match.group(4) or src_id.replace('_', ' ').title()
-                src_name = cls._clean_label(src_raw)
-
-                proto = (m_match.group(5) or "HTTPS").strip()
-
-                tgt_id = m_match.group(6).strip().lower()
-                tgt_raw = m_match.group(7) or m_match.group(8) or m_match.group(9) or tgt_id.replace('_', ' ').title()
-                tgt_name = cls._clean_label(tgt_raw)
-
-                # Register nodes
-                if src_id not in nodes_dict:
-                    nodes_dict[src_id] = DiagramNode(
-                        id=src_id,
-                        name=src_name,
-                        component_type=cls._infer_component_type(src_name),
-                        zone=current_zone
-                    )
-                else:
-                    if src_name != src_id.replace('_', ' ').title():
-                        nodes_dict[src_id].name = src_name
-                        nodes_dict[src_id].component_type = cls._infer_component_type(src_name)
-
-                if tgt_id not in nodes_dict:
-                    nodes_dict[tgt_id] = DiagramNode(
-                        id=tgt_id,
-                        name=tgt_name,
-                        component_type=cls._infer_component_type(tgt_name),
-                        zone=current_zone
-                    )
-                else:
-                    if tgt_name != tgt_id.replace('_', ' ').title():
-                        nodes_dict[tgt_id].name = tgt_name
-                        nodes_dict[tgt_id].component_type = cls._infer_component_type(tgt_name)
-
-                edges.append(DiagramEdge(
-                    source_id=src_id,
-                    target_id=tgt_id,
-                    protocol=proto,
-                    sync_mode="async" if any(q in proto.lower() for q in ["kafka", "queue", "event", "amqp", "pubsub"]) else "sync",
-                    description=f"Connects {src_name} to {tgt_name} via {proto}"
-                ))
-                continue
-
-            # 2. Try Simple Arrow Match
-            arr_match = simple_arrow_regex.match(line_str)
-            if arr_match:
-                raw_src = cls._clean_label(arr_match.group(1).strip())
-                raw_tgt = cls._clean_label(arr_match.group(2).strip())
-                proto = (arr_match.group(3) or "HTTPS").strip()
-
-                src_id = re.sub(r'[^a-zA-Z0-9_]', '_', raw_src.lower()).strip('_')
-                tgt_id = re.sub(r'[^a-zA-Z0-9_]', '_', raw_tgt.lower()).strip('_')
-
-                if src_id and tgt_id:
-                    if src_id not in nodes_dict:
-                        nodes_dict[src_id] = DiagramNode(
-                            id=src_id,
-                            name=raw_src,
-                            component_type=cls._infer_component_type(raw_src),
-                            zone=current_zone
-                        )
-                    if tgt_id not in nodes_dict:
-                        nodes_dict[tgt_id] = DiagramNode(
-                            id=tgt_id,
-                            name=raw_tgt,
-                            component_type=cls._infer_component_type(raw_tgt),
-                            zone=current_zone
-                        )
-                    edges.append(DiagramEdge(
-                        source_id=src_id,
-                        target_id=tgt_id,
-                        protocol=proto,
-                        sync_mode="async" if "async" in proto.lower() or "event" in proto.lower() else "sync",
-                        description=f"Traffic from {raw_src} to {raw_tgt} over {proto}"
-                    ))
-
-        return ArchitectureTopology(
-            system_name=system_name,
-            environment="Production",
-            nodes=list(nodes_dict.values()),
-            edges=edges,
-            boundary_zones=list(zones) if zones else ["Default Zone"],
-            description=f"Parsed topology with {len(nodes_dict)} components and {len(edges)} communication pathways."
-        )
 
     @staticmethod
     def _infer_component_type(name: str) -> str:

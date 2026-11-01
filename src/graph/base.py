@@ -55,3 +55,26 @@ class BaseGraphStore(ABC):
     def export(self) -> KnowledgeGraphExport:
         """Export the full graph into serialized entities and relations."""
         pass
+
+    def personalized_pagerank(
+        self,
+        seed_weights: Dict[str, float],
+        alpha: float = 0.85,
+        max_iter: int = 100
+    ) -> Dict[str, float]:
+        """
+        HippoRAG Associative Activation via Personalized PageRank (PPR).
+        Diffuses activation probability across edge weights starting from seed entities.
+        """
+        return {}
+
+    def extract_steiner_subgraph(
+        self,
+        terminal_ids: List[str]
+    ) -> Tuple[List[KGEntity], List[KGRelation]]:
+        """
+        Extract the Steiner Minimal Tree (SMT) subgraph connecting all terminal entities
+        with the minimal possible edge weight.
+        """
+        return [], []
+

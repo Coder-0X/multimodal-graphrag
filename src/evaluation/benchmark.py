@@ -6,11 +6,12 @@ and topological hallucination resistance across complex financial and architectu
 Includes rigorous inferential statistics (N=20, Paired Student's t-test, Cohen's d,
 and 95% Confidence Intervals) to ensure genuine statistical significance.
 """
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 import time
 import sys
 import io
 import math
+import numpy as np
 
 # Ensure UTF-8 on Windows
 if sys.platform == "win32":
@@ -336,12 +337,84 @@ BENCHMARK_CASES: List[Dict[str, Any]] = [
 # Inferential Statistics Engine (Paired Student's t-test, Cohen's d, CI)
 # ---------------------------------------------------------------------------
 
+def compute_wilcoxon_signed_rank(x: List[float], y: List[float]) -> Dict[str, Any]:
+    """
+    Computes the Wilcoxon Signed-Rank Test for paired observations.
+    Non-parametric hypothesis test that does not assume normal distribution of differences.
+    Returns test statistic W, z-score with tie correction, and two-tailed p-value.
+    """
+    diffs = [b - a for a, b in zip(x, y)]
+    non_zero = [d for d in diffs if abs(d) > 1e-7]
+    nr = len(non_zero)
+    if nr == 0:
+        return {"W_stat": 0.0, "z_stat": 0.0, "p_value": 1.0, "nr": 0}
+
+    abs_diffs = [(abs(d), d > 0) for d in non_zero]
+    abs_diffs.sort(key=lambda t: t[0])
+
+    ranks: List[Tuple[float, bool]] = []
+    i = 0
+    tie_lengths: List[int] = []
+    while i < nr:
+        j = i
+        while j < nr and abs(abs_diffs[j][0] - abs_diffs[i][0]) < 1e-7:
+            j += 1
+        tie_len = j - i
+        tie_lengths.append(tie_len)
+        avg_rank = (i + 1 + j) / 2.0
+        for k in range(i, j):
+            ranks.append((avg_rank, abs_diffs[k][1]))
+        i = j
+
+    w_plus = sum(r for r, is_pos in ranks if is_pos)
+    w_minus = sum(r for r, is_pos in ranks if not is_pos)
+    w_stat = min(w_plus, w_minus)
+
+    mean_w = nr * (nr + 1) / 4.0
+    tie_correction = sum(t**3 - t for t in tie_lengths) / 48.0
+    var_w = (nr * (nr + 1) * (2 * nr + 1)) / 24.0 - tie_correction
+    sd_w = math.sqrt(var_w) if var_w > 0 else 1e-9
+
+    z = (w_plus - mean_w - 0.5 * (1.0 if w_plus > mean_w else (-1.0 if w_plus < mean_w else 0.0))) / sd_w
+    p_value = 2.0 * (1.0 - 0.5 * (1.0 + math.erf(abs(z) / math.sqrt(2.0))))
+    p_value = max(1e-6, min(1.0, p_value))
+
+    return {
+        "W_stat": round(w_stat, 1),
+        "W_plus": round(w_plus, 1),
+        "W_minus": round(w_minus, 1),
+        "z_stat": round(z, 3),
+        "p_value": p_value,
+        "nr": nr
+    }
+
+
+def compute_bootstrap_confidence_interval(
+    deltas: List[float],
+    n_resamples: int = 10000,
+    ci: float = 0.95,
+    seed: int = 42
+) -> Tuple[float, float]:
+    """Computes empirical bootstrap confidence interval for mean difference (10,000 resamples)."""
+    if len(deltas) < 2:
+        return (0.0, 0.0)
+    arr = np.array(deltas, dtype=float)
+    rng = np.random.RandomState(seed)
+    boot_indices = rng.randint(0, len(arr), size=(n_resamples, len(arr)))
+    boot_means = np.mean(arr[boot_indices], axis=1)
+    alpha = (1.0 - ci) / 2.0
+    ci_low = float(np.percentile(boot_means, alpha * 100))
+    ci_high = float(np.percentile(boot_means, (1.0 - alpha) * 100))
+    return round(ci_low, 2), round(ci_high, 2)
+
+
 def compute_statistical_report(results: List[Dict[str, Any]]) -> Dict[str, Any]:
     """
     Computes rigorous inferential statistics comparing Standard Vector RAG vs. GraphRAG:
     - Paired Student's t-test (t-statistic, df, two-tailed p-value)
+    - Wilcoxon Signed-Rank Test (non-parametric rank sum test)
+    - Empirical 10,000-resample Bootstrap Confidence Intervals
     - Mean completeness & standard deviations
-    - 95% Confidence Interval for mean delta
     - Cohen's d effect size
     """
     n = len(results)
@@ -365,16 +438,21 @@ def compute_statistical_report(results: List[Dict[str, Any]]) -> Dict[str, Any]:
     t_stat = mean_delta / se_delta if se_delta > 0 else 0.0
     df = n - 1
 
-    # Approximate two-tailed p-value using Student's t approximation via normal/regularized incomplete beta
     t_abs = abs(t_stat)
     z = t_abs * (1.0 - 1.0 / (4.0 * df)) / math.sqrt(1.0 + (t_abs ** 2) / (2.0 * df))
     p_value = 2.0 * (1.0 - 0.5 * (1.0 + math.erf(z / math.sqrt(2.0))))
     p_value = max(1e-6, min(1.0, p_value))
 
-    # 95% Confidence Interval critical value
+    # Analytical 95% Confidence Interval
     t_crit = 2.093 if df >= 19 else (2.131 if df >= 15 else 2.228)
     ci_lower = round(mean_delta - t_crit * se_delta, 2)
     ci_upper = round(mean_delta + t_crit * se_delta, 2)
+
+    # Bootstrap 95% Confidence Interval (10,000 resamples)
+    boot_lower, boot_upper = compute_bootstrap_confidence_interval(deltas, n_resamples=10000, ci=0.95)
+
+    # Wilcoxon Signed-Rank Test
+    wilcoxon_res = compute_wilcoxon_signed_rank(std_scores, graph_scores)
 
     # Cohen's d effect size
     cohen_d = round(mean_delta / sd_delta, 3) if sd_delta > 0 else 0.0
@@ -389,8 +467,11 @@ def compute_statistical_report(results: List[Dict[str, Any]]) -> Dict[str, Any]:
         "p_value": p_value,
         "is_significant": p_value < 0.05,
         "ci_95": (ci_lower, ci_upper),
+        "ci_95_boot": (boot_lower, boot_upper),
+        "wilcoxon": wilcoxon_res,
         "cohen_d": cohen_d,
     }
+
 
 
 # ---------------------------------------------------------------------------
@@ -646,17 +727,26 @@ class BenchmarkRunner:
             else:
                 d_desc = f"{d_val} (Small Effect Size)"
 
+            wilc = stats.get("wilcoxon", {})
+            w_p = wilc.get("p_value", 1.0)
+            w_p_str = "< 0.001" if w_p < 0.001 else f"= {w_p:.4f}"
+            w_badge = "[bold green][p < 0.01][/bold green]" if w_p < 0.01 else ("[bold green][p < 0.05][/bold green]" if w_p < 0.05 else "[dim][p >= 0.05][/dim]")
+            boot_ci = stats.get("ci_95_boot", stats["ci_95"])
+
             stats_text = (
                 f"• Sample Size: [bold]N={stats['n']}[/bold] paired query evaluations across 5 research categories\n"
                 f"• Standard Vector RAG Mean Recall: [bold red]{stats['mean_std']}%[/bold red]\n"
                 f"• Multimodal GraphRAG Mean Recall: [bold green]{stats['mean_graph']}%[/bold green]\n"
                 f"• Mean Absolute Gain (Δ): [bold yellow]+{stats['mean_delta']}%[/bold yellow]\n"
                 f"• Paired Two-Tailed t-test: [bold]t = {stats['t_stat']}[/bold] (df = {stats['df']}), p-value [bold]{p_val_str}[/bold] {sig_badge}\n"
-                f"• 95% Confidence Interval for Gain: [bold][{stats['ci_95'][0]}%, {stats['ci_95'][1]}%][/bold]\n"
+                f"• Wilcoxon Signed-Rank Test: [bold]W = {wilc.get('W_stat', 0)}[/bold] (z = {wilc.get('z_stat', 0)}, Nr = {wilc.get('nr', 0)}), p-value [bold]{w_p_str}[/bold] {w_badge}\n"
+                f"• 95% Confidence Interval (Analytical): [bold][{stats['ci_95'][0]}%, {stats['ci_95'][1]}%][/bold]\n"
+                f"• 95% Bootstrap CI (10,000 resamples): [bold][{boot_ci[0]}%, {boot_ci[1]}%][/bold]\n"
                 f"• Effect Size (Cohen's d): [bold]{d_desc}[/bold]\n"
                 f"• Null Hypothesis Status: [bold green]{alpha_str}[/bold green]"
             )
             console.print(Panel(stats_text, title="[bold yellow]🔬 Formal Inferential Statistics & Hypothesis Testing[/bold yellow]", border_style="yellow"))
+
 
 
 def main():
