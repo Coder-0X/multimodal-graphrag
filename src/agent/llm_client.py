@@ -138,7 +138,8 @@ class LLMReasoningClient:
         entities: List[Dict[str, Any]],
         relations: List[Dict[str, Any]],
         paths: List[List[str]],
-        evidence_text: str
+        evidence_text: str,
+        unmatched_concepts: Optional[List[str]] = None
     ) -> Dict[str, Any]:
         """Generate grounded multi-hop response using live LLM or extractive graph engine."""
         if self.gemini_key and (self.provider in ("auto", "gemini")):
@@ -146,7 +147,7 @@ class LLMReasoningClient:
         elif self.openai_key and (self.provider in ("auto", "openai")):
             return self._call_openai(query, intent, entities, relations, paths, evidence_text)
         else:
-            return self._extractive_graph_synthesis(query, intent, entities, relations, paths)
+            return self._extractive_graph_synthesis(query, intent, entities, relations, paths, unmatched_concepts=unmatched_concepts)
 
     def _call_gemini(
         self,
@@ -250,7 +251,8 @@ Answer the query grounded strictly on the graph evidence with explicit citations
         intent: str,
         entities: List[Dict[str, Any]],
         relations: List[Dict[str, Any]],
-        paths: List[List[str]]
+        paths: List[List[str]],
+        unmatched_concepts: Optional[List[str]] = None
     ) -> Dict[str, Any]:
         """
         Deterministic, dynamic extractive graph reasoning when no API key is provided.
@@ -266,12 +268,15 @@ Answer the query grounded strictly on the graph evidence with explicit citations
 
         # 1. Multi-hop traversal paths
         lines.append("#### Multi-Hop Associative Pathways:")
-        if paths:
+        if unmatched_concepts:
+            lines.append(f"- *Topological absence confirmed: The queried concepts ({', '.join(unmatched_concepts)}) do not exist in the Knowledge Graph. No records, components, or liabilities exist for these terms.*")
+            lines.append("- *Topological disconnection confirmed: Zero valid multi-hop paths exist connecting these terms in the knowledge base.*")
+        elif paths:
             for p in paths:
                 named_path = [ent_map.get(nid, {}).get("name", nid) for nid in p]
                 lines.append(f"```text\n{' ──▶ '.join(named_path)}\n```")
         else:
-            lines.append("- *No direct multi-hop bridging path found between query seed entities; topological disconnection confirmed in knowledge graph.*")
+            lines.append("- *No direct multi-hop bridging path found between query seed entities; topological disconnection confirmed in knowledge graph. Queried concepts are not connected or not present in the indexed topology.*")
         lines.append("")
 
         # 2. Extract domain findings

@@ -19,3 +19,4 @@ class AgentState(TypedDict):
     intermediate_reasoning: List[str]
     final_answer: str
     citations: List[str]
+    unmatched_concepts: List[str]

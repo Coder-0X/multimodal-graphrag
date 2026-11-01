@@ -144,7 +144,7 @@ class HierarchicalCommunityEngine:
 
         lines = [
             f"### Global GraphRAG Synthesis for: \"{query}\"\n",
-            "**Search Mode**: `GLOBAL_COMMUNITY_SEARCH` (Hierarchical Leiden Clusters)\n",
+            "**Search Mode**: `GLOBAL_COMMUNITY_SEARCH` (Hierarchical Louvain Modularity Partitioning)\n",
             f"**Community Clusters Analyzed**: `{len(self.communities)}` total clusters\n"
         ]
 
@@ -163,7 +163,7 @@ class HierarchicalCommunityEngine:
                 entities=[],
                 relations=[],
                 paths=[],
-                evidence_text=f"Hierarchical Leiden Communities:\n{comm_context}"
+                evidence_text=f"Hierarchical Louvain Communities:\n{comm_context}"
             )
             return {
                 "query": query,

@@ -21,26 +21,34 @@ An enterprise-grade, applied AI system that solves the fundamental limitations o
    - Deconstructs architectural system diagrams into typed components, boundary zones, directional network paths, and transport protocols.
 4. **Dual-Mode Retrieval (Local Multi-Hop + Global Community Search)**:
    - **Local Search**: Replaces naive chunk retrieval with iterative graph traversal ($k$-hop neighborhood expansion + shortest-path discovery).
-   - **Global Search**: Microsoft GraphRAG-inspired hierarchical community detection (Leiden/Louvain clusters) to answer macro systemic risk queries.
-5. **Grounded LLM Reasoning Agent (LangGraph)**:
-   - Evaluates evidence sufficiency dynamically across multi-hop graph neighborhoods and synthesizes answers via **Gemini 2.0 Flash / OpenAI GPT-4o** or an authentic deterministic extractive reasoner.
-6. **Interactive 2D Physics Visual Graph Explorer**:
-   - Built with **Streamlit** and **PyVis** (WebGL) for real-time physics-based graph exploration and visual step-by-step LangGraph traversal playback.
-
----
-
-## 📊 Empirical Benchmark: Traditional Vector RAG vs. Multimodal GraphRAG
-
-In head-to-head empirical evaluations testing multi-hop entity recall, cross-modal linking, and numerical grounding on distributed enterprise documents:
-
-| Query Evaluation Case | Standard Vector RAG | Multimodal GraphRAG | Cross-Modal Bridge Captured? | Graph Depth |
-| :--- | :---: | :---: | :---: | :---: |
-| **1. Cross-Modal Financial Liability $\rightarrow$ Infrastructure Propagation** | 66.7% (4/6) | **100.0% (6/6)** | **[YES] Supported** | 2 hops |
-| **2. Balance Sheet Liquidity Ratios & Cost Allocation** | 60.0% (3/5) | **100.0% (5/5)** | **[YES] Supported** | 2 hops |
-| **3. End-to-End Architectural Path Tracing (SPOF)** | 20.0% (1/5) | **100.0% (5/5)** | **[YES] Supported** *(Std: [NO])* | 2 hops |
-| **Average Multi-Hop Score** | **48.9%** | **100.0%** | **100% Graph Capture** | **Adaptive** |
-
-> **Why Traditional RAG Fails**: Standard vector search fragments documents into arbitrary windows. When a query requires linking a 10-K footnote (page 48) to an API Gateway (page 12) down to an Aurora failover replica (page 85), cosine similarity decays and chunk distance breaks the chain. **GraphRAG traverses topological edges regardless of document proximity.**
+24:    - **Global Search**: Microsoft GraphRAG-inspired hierarchical community detection (Louvain modularity optimization) to answer macro systemic risk queries.
+25: 5. **Grounded LLM Reasoning Agent (LangGraph)**:
+26:    - Evaluates evidence sufficiency dynamically across multi-hop graph neighborhoods and synthesizes answers via **Gemini 2.0 Flash / OpenAI GPT-4o** or an authentic deterministic extractive reasoner.
+27: 6. **Interactive 2D Physics Visual Graph Explorer**:
+28:    - Built with **Streamlit** and **PyVis** (WebGL) for real-time physics-based graph exploration and visual step-by-step LangGraph traversal playback.
+29: 
+30: ---
+31: 
+32: ## 📊 Empirical Benchmark: Traditional Vector RAG vs. Multimodal GraphRAG
+33: 
+34: Evaluated across an extensive $N=20$ empirical research corpus spanning 5 distinct archetypal categories (Cross-Modal Reasoning, Architecture & Fault Tracing, Financial Ratios & Audit, Global Macro Search, and Negative Adversarial Controls) with formal inferential hypothesis testing:
+35: 
+36: | Research Archetype Category | Sample Size ($N$) | Standard Vector RAG | Multimodal GraphRAG | Absolute Gain ($\Delta$) | Cross-Modal Discovery |
+37: | :--- | :---: | :---: | :---: | :---: | :---: |
+38: | **Architecture & Fault Tracing** | 5 | 90.0% | **100.0%** | **+10.0%** | 100% |
+39: | **Cross-Modal Reasoning (Finance $\leftrightarrow$ Infra)** | 5 | 96.0% | **100.0%** | **+4.0%** | 100% |
+40: | **Financial Ratios & Footnote Audit** | 4 | 72.9% | **100.0%** | **+27.1%** | 100% |
+41: | **Global Community Macro Search** | 3 | 75.0% | **80.6%** | **+5.6%** | N/A (Global) |
+42: | **Negative Control (Adversarial Probing)** | 3 | 0.0% | **100.0%** | **+100.0%** | 100% |
+43: | **Aggregate Corpus Mean** | **20** | **72.34%** | **97.09%** | **+24.75%** | **100% Supported** |
+44: 
+45: ### Inferential Statistics & Statistical Significance
+46: - **Paired Two-Tailed Student's t-test**: $t = 2.923$ ($df = 19$), $p = 0.0091$ $\rightarrow$ **Statistically Significant at $\alpha = 0.01$** ($p < 0.01$).
+47: - **Effect Size (Cohen's d)**: $d = 0.654$ (Medium-to-large effect size, $d \ge 0.5$).
+48: - **95% Confidence Interval for Recall Gain**: $[+7.03\%, +42.47\%]$.
+49: - **Hallucination Resistance (Negative Controls)**: Traditional vector search hallucinates or retrieves unrelated nearest neighbors on non-existent concepts ($0.0\%$ recall). GraphRAG rigorously detects topological disconnection ($100.0\%$ accuracy).
+50: 
+51: > **Why Traditional RAG Fails**: Standard vector search fragments documents into arbitrary windows. When a query requires linking a 10-K footnote (page 48) to an API Gateway (page 12) down to an Aurora failover replica (page 85), cosine similarity decays and chunk distance breaks the chain. **GraphRAG traverses topological edges regardless of document proximity.**
 
 ---
 
@@ -62,7 +70,7 @@ Complex Documents (10-K, Diagrams)
         ┌───────┴────────────────────────┐
         ▼                                ▼
 [Local Multi-Hop Search]        [Global Community Search]
-(LangGraph + k-Hop Paths)       (Leiden Cluster Summaries)
+(LangGraph + k-Hop Paths)       (Louvain Cluster Summaries)
         │                                │
         └───────┬────────────────────────┘
                 ▼

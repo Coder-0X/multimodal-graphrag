@@ -185,7 +185,63 @@ class MultimodalVisionParser:
             if parsed.line_items:
                 return parsed
 
-        return self.parse_balance_sheet()
+        raise ValueError(
+            "Could not extract structured balance sheet line items from the provided PDF. "
+            "Please ensure the document contains a readable tabular financial statement."
+        )
+
+    @staticmethod
+    def dict_to_financial_statement(data: Dict[str, Any]) -> FinancialStatement:
+        """Convert a structured dictionary (e.g. from Gemini Vision) into a typed FinancialStatement."""
+        line_items = []
+        for it in data.get("line_items", []):
+            line_items.append(LineItem(
+                name=it.get("name", "Unknown Item"),
+                value=float(it.get("value", 0.0)),
+                currency=it.get("currency", data.get("currency", "USD")),
+                scale=it.get("scale", data.get("scale", "millions")),
+                category=it.get("category", "General Assets")
+            ))
+        stmt = FinancialStatement(
+            statement_type="balance_sheet",
+            company_name=data.get("company_name", "Vision-Extracted Corporation"),
+            reporting_period=data.get("reporting_period", "FY2025"),
+            currency=data.get("currency", "USD"),
+            scale=data.get("scale", "millions"),
+            line_items=line_items
+        )
+        FinancialTableExtractor.compute_ratios(stmt)
+        return stmt
+
+    @staticmethod
+    def dict_to_architecture_topology(data: Dict[str, Any]) -> ArchitectureTopology:
+        """Convert a structured dictionary (e.g. from Gemini Vision) into a typed ArchitectureTopology."""
+        nodes = []
+        for n in data.get("nodes", []):
+            nodes.append(DiagramNode(
+                id=n.get("id", "comp").lower().replace(" ", "_"),
+                name=n.get("name", "Component"),
+                component_type=n.get("component_type", "microservice"),
+                zone=n.get("zone", "Default Zone"),
+                properties=n.get("properties", {})
+            ))
+        edges = []
+        for e in data.get("edges", []):
+            edges.append(DiagramEdge(
+                source_id=e.get("source_id", "").lower().replace(" ", "_"),
+                target_id=e.get("target_id", "").lower().replace(" ", "_"),
+                protocol=e.get("protocol", "HTTPS"),
+                sync_mode=e.get("sync_mode", "sync"),
+                description=e.get("description", "")
+            ))
+        return ArchitectureTopology(
+            system_name=data.get("system_name", "Vision-Extracted Architecture"),
+            environment=data.get("environment", "Production"),
+            nodes=nodes,
+            edges=edges,
+            boundary_zones=list(set(n.zone for n in nodes if n.zone)),
+            description=f"Extracted topology with {len(nodes)} components and {len(edges)} paths."
+        )
 
     # -----------------------------------------------------------------------
     # Showcase Datasets Loaded Authentically from Disk

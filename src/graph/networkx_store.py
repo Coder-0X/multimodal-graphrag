@@ -95,28 +95,54 @@ class NetworkXGraphStore(BaseGraphStore):
 
         return subgraph_entities, subgraph_relations
 
-    def find_shortest_path(self, source_id: str, target_id: str) -> List[str]:
-        """Find the shortest sequence of entity IDs connecting source and target."""
+    CONTAINER_EDGE_TYPES = {"PART_OF_SYSTEM", "RECORDED_IN", "REPORTS_FOR", "HAS_ACCOUNTING_SECTION", "HAS_ZONE"}
+
+    def find_shortest_path(self, source_id: str, target_id: str, operational_only: bool = True) -> List[str]:
+        """
+        Find the shortest sequence of entity IDs connecting source and target.
+        When operational_only is True, ignores structural/metadata container edges
+        (e.g., PART_OF_SYSTEM, RECORDED_IN) to ensure paths reflect genuine
+        operational dataflow, microservice dependencies, or cross-modal funding bridges.
+        """
         if source_id not in self.graph or target_id not in self.graph:
             return []
+
+        # Build view with or without metadata container edges
+        if operational_only:
+            op_edges = [
+                (u, v) for u, v, d in self.graph.edges(data=True)
+                if d.get("relation_type") not in self.CONTAINER_EDGE_TYPES
+            ]
+            search_graph = self.graph.edge_subgraph(op_edges)
+        else:
+            search_graph = self.graph
+
+        if source_id not in search_graph or target_id not in search_graph:
+            return []
+
         try:
-            # First try directed path
-            return nx.shortest_path(self.graph, source=source_id, target=target_id)
-        except nx.NetworkXNoPath:
-            # Fallback to undirected path if directional link is reversed
-            try:
-                undirected = self.graph.to_undirected()
-                return nx.shortest_path(undirected, source=source_id, target=target_id)
-            except nx.NetworkXNoPath:
-                return []
+            # 1. Try directed path
+            return nx.shortest_path(search_graph, source=source_id, target=target_id)
+        except (nx.NetworkXNoPath, nx.NodeNotFound):
+            pass
+
+        # 2. Try undirected operational path (for bidirectional dependency resolution)
+        try:
+            undirected = search_graph.to_undirected()
+            return nx.shortest_path(undirected, source=source_id, target=target_id)
+        except (nx.NetworkXNoPath, nx.NodeNotFound):
+            return []
 
     def detect_communities(self) -> Dict[int, List[str]]:
-        """Partition the graph into modular communities using greedy modularity."""
+        """Partition the graph into modular communities using Louvain modularity optimization."""
         if len(self.graph) == 0:
             return {}
         undirected = self.graph.to_undirected()
         try:
-            communities = list(nx.community.greedy_modularity_communities(undirected))
+            if hasattr(nx.community, "louvain_communities"):
+                communities = list(nx.community.louvain_communities(undirected, seed=42))
+            else:
+                communities = list(nx.community.greedy_modularity_communities(undirected))
             return {i: list(comm) for i, comm in enumerate(communities)}
         except Exception:
             return {0: list(self.graph.nodes())}

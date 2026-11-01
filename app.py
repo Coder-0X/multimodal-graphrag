@@ -191,7 +191,7 @@ with tab_explore:
 
     col_q1, col_q2 = st.columns([3, 1])
     selected_sample = col_q1.selectbox("Select a benchmark multi-hop query or type below:", sample_queries)
-    search_mode = col_q2.selectbox("Reasoning Strategy:", ["Auto-Route", "Local Multi-Hop (LangGraph)", "Global Search (Leiden Communities)"])
+    search_mode = col_q2.selectbox("Reasoning Strategy:", ["Auto-Route", "Local Multi-Hop (LangGraph)", "Global Search (Louvain Communities)"])
 
     user_query = st.text_input("Active Query:", value=selected_sample)
 
@@ -248,9 +248,9 @@ with tab_ingest:
 
     with col_u1:
         uploaded_file = st.file_uploader(
-            "Upload Document Image or PDF:",
-            type=["png", "jpg", "jpeg", "pdf"],
-            help="Supports high-res balance sheets, financial tables, and system architecture blueprints."
+            "Upload Document (PDF, Markdown 10-K, Mermaid Architecture, or Image):",
+            type=["png", "jpg", "jpeg", "pdf", "md", "mmd", "txt"],
+            help="Supports balance sheets (.md, .pdf), architecture blueprints (.mmd, .txt), or diagram images."
         )
 
         doc_type = st.radio(
@@ -260,9 +260,9 @@ with tab_ingest:
         )
 
         api_key_input = st.text_input(
-            "Gemini API Key (optional for live AI vision):",
+            "Gemini API Key (required only for image vision extraction):",
             type="password",
-            placeholder="AIzaSy... (leave blank to use pre-loaded showcase samples)",
+            placeholder="AIzaSy... (Markdown, Mermaid, and PDF parse 100% locally with zero keys)",
             help="Your key is used in-memory for this session only and is never stored."
         )
 
@@ -279,19 +279,48 @@ with tab_ingest:
                             statement = parser.extract_from_pdf(file_bytes)
                             ingest_stats = pipeline.ingest_custom_data(statement=statement)
                             st.session_state["active_dataset"] = f"Uploaded PDF: {uploaded_file.name}"
-                        elif api_key_input or sidebar_api_key:
-                            key = api_key_input or sidebar_api_key
-                            mime = "image/png" if file_name.endswith(".png") else "image/jpeg"
-                            extracted = parser.extract_from_image_gemini(file_bytes, mime_type=mime, api_key=key)
-                            st.json(extracted)
-                            st.session_state["active_dataset"] = f"Gemini Vision Extracted: {uploaded_file.name}"
-                            st.success("Successfully ingested image via live Gemini 2.0 Flash Vision!")
+                            st.success(f"Successfully ingested PDF! Added {ingest_stats['total_entities']} entities.")
                             st.rerun()
+
+                        elif file_name.endswith(".mmd") or (file_name.endswith(".txt") and doc_type == "System Architecture Diagram"):
+                            text_content = file_bytes.decode("utf-8", errors="replace")
+                            topology = ArchitectureDiagramExtractor.extract_from_text(text_content, system_name=uploaded_file.name)
+                            ingest_stats = pipeline.ingest_custom_data(topology=topology)
+                            st.session_state["active_dataset"] = f"Uploaded Architecture: {uploaded_file.name}"
+                            st.success(f"Successfully ingested Architecture! Added {len(topology.nodes)} components.")
+                            st.rerun()
+
+                        elif file_name.endswith(".md") or (file_name.endswith(".txt") and doc_type == "Financial Balance Sheet"):
+                            text_content = file_bytes.decode("utf-8", errors="replace")
+                            statement = FinancialTableExtractor.extract_from_text(text_content, company_name=uploaded_file.name.split('.')[0])
+                            ingest_stats = pipeline.ingest_custom_data(statement=statement)
+                            st.session_state["active_dataset"] = f"Uploaded 10-K: {uploaded_file.name}"
+                            st.success(f"Successfully ingested Financial Table! Extracted {len(statement.line_items)} items.")
+                            st.rerun()
+
+                        elif file_name.endswith((".png", ".jpg", ".jpeg")):
+                            key = api_key_input or sidebar_api_key
+                            if not key:
+                                st.warning(
+                                    "Live visual extraction from raw images requires a Gemini API Key. "
+                                    "Please enter your key above, or upload Markdown (.md) / Mermaid (.mmd) files for instant zero-key local parsing."
+                                )
+                            else:
+                                mime = "image/png" if file_name.endswith(".png") else "image/jpeg"
+                                extracted = parser.extract_from_image_gemini(file_bytes, mime_type=mime, api_key=key)
+                                if extracted.get("type") == "balance_sheet" or "line_items" in extracted:
+                                    statement = parser.dict_to_financial_statement(extracted)
+                                    ingest_stats = pipeline.ingest_custom_data(statement=statement)
+                                    st.session_state["active_dataset"] = f"Gemini Vision: {statement.company_name}"
+                                    st.success(f"Ingested Balance Sheet via Gemini Vision! Extracted {len(statement.line_items)} line items.")
+                                else:
+                                    topology = parser.dict_to_architecture_topology(extracted)
+                                    ingest_stats = pipeline.ingest_custom_data(topology=topology)
+                                    st.session_state["active_dataset"] = f"Gemini Vision: {topology.system_name}"
+                                    st.success(f"Ingested Architecture via Gemini Vision! Extracted {len(topology.nodes)} components.")
+                                st.rerun()
                         else:
-                            st.warning(
-                                "Live visual extraction from raw images requires a Gemini API Key. "
-                                "Please enter your key above, or click 'Load Apple Inc.' on the right for full multi-hop demonstration without an API key."
-                            )
+                            st.error(f"Unsupported file format: {uploaded_file.name}")
                     except Exception as e:
                         st.error(f"Error during ingestion: {e}")
 

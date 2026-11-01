@@ -96,7 +96,8 @@ class GraphRAGAgent:
             "bridging_paths": [],
             "evidence_text": retrieval_res["formatted_evidence"],
             "intermediate_reasoning": reasoning,
-            "hop_count": 1
+            "hop_count": 1,
+            "unmatched_concepts": []
         }
 
     def _evaluate_evidence(self, state: AgentState) -> Dict[str, Any]:
@@ -166,17 +167,54 @@ class GraphRAGAgent:
             f"Hop {current_hops}: Expanded subgraph to {len(sub_entities)} entities and {len(sub_relations)} relations."
         )
 
-        # Check for newly discovered paths between seeds across the expanded frontier
-        bridging_paths = list(state.get("bridging_paths", []))
-        if len(seed_ids) >= 2:
-            bridging_paths = []
-            for i in range(len(seed_ids)):
-                for j in range(i + 1, min(len(seed_ids), 4)):
-                    p = self.graph_store.find_shortest_path(seed_ids[i], seed_ids[j])
+        # Check for newly discovered operational paths between query-grounded seeds
+        bridging_paths = []
+        intent = state.get("intent", "")
+        q_words = set(re.findall(r'[a-zA-Z0-9]+', state["query"].lower()))
+
+        def is_query_grounded(ent) -> bool:
+            if not ent:
+                return False
+            ent_words = set(re.findall(r'[a-zA-Z0-9]+', ent.name.lower())) | set(re.findall(r'[a-zA-Z0-9]+', ent.id.lower()))
+            common = ent_words.intersection(q_words) - {
+                "the", "and", "for", "with", "from", "down", "sys", "comp", "metric", "cat",
+                "org", "zone", "flow", "tier", "route", "customer", "payments", "cluster"
+            }
+            return len(common) > 0
+
+        grounded_seeds = [s for s in seed_ids if is_query_grounded(self.graph_store.get_entity(s))]
+
+        if len(grounded_seeds) >= 2:
+            for i in range(len(grounded_seeds)):
+                e1 = self.graph_store.get_entity(grounded_seeds[i])
+                t1 = e1.entity_type if e1 else ""
+                for j in range(i + 1, len(grounded_seeds)):
+                    e2 = self.graph_store.get_entity(grounded_seeds[j])
+                    t2 = e2.entity_type if e2 else ""
+
+                    # For cross-modal queries: only validate paths that actually span disparate domains
+                    if intent == "CROSS_MODAL_FINANCIAL_INFRASTRUCTURE":
+                        is_cross_domain = (
+                            (t1 == "FINANCIAL_METRIC" and t2 in ("SYSTEM_COMPONENT", "INFRASTRUCTURE_ZONE")) or
+                            (t2 == "FINANCIAL_METRIC" and t1 in ("SYSTEM_COMPONENT", "INFRASTRUCTURE_ZONE"))
+                        )
+                        if not is_cross_domain:
+                            continue
+
+                    p = self.graph_store.find_shortest_path(grounded_seeds[i], grounded_seeds[j], operational_only=True)
                     if p and len(p) > 1:
                         bridging_paths.append(p)
+
             if bridging_paths:
-                reasoning.append(f"Hop {current_hops}: Resolved {len(bridging_paths)} bridging paths between seeds.")
+                reasoning.append(f"Hop {current_hops}: Resolved {len(bridging_paths)} operational bridging paths between seeds.")
+
+        return {
+            "hop_count": current_hops,
+            "retrieved_subgraph_entities": [e.model_dump() for e in sub_entities],
+            "retrieved_subgraph_relations": [r.model_dump() for r in sub_relations],
+            "bridging_paths": bridging_paths,
+            "intermediate_reasoning": reasoning
+        }
 
         return {
             "hop_count": current_hops,
@@ -194,6 +232,7 @@ class GraphRAGAgent:
         relations = state["retrieved_subgraph_relations"]
         paths = state["bridging_paths"]
         evidence_text = state.get("evidence_text", "")
+        unmatched = state.get("unmatched_concepts", [])
 
         synthesis_result = self.llm_client.generate_synthesis(
             query=query,
@@ -201,7 +240,8 @@ class GraphRAGAgent:
             entities=entities,
             relations=relations,
             paths=paths,
-            evidence_text=evidence_text
+            evidence_text=evidence_text,
+            unmatched_concepts=unmatched if len(unmatched) >= 2 else None
         )
 
         return {
@@ -225,6 +265,7 @@ class GraphRAGAgent:
             "is_sufficient": False,
             "intermediate_reasoning": [],
             "final_answer": "",
-            "citations": []
+            "citations": [],
+            "unmatched_concepts": []
         }
         return self.workflow.invoke(initial_state)
