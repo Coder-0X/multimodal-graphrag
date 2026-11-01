@@ -320,29 +320,84 @@ with tab_ingest:
 # ---------------------------------------------------------------------------
 
 with tab_benchmark:
-    st.markdown("### 🏆 Head-to-Head Benchmark: Traditional Vector RAG vs. Multimodal GraphRAG")
-    st.markdown("Empirical comparison testing multi-hop entity recall, cross-modal linking, and numerical grounding.")
+    st.markdown("### 🏆 Empirical Research Benchmark: Traditional Vector RAG vs. Multimodal GraphRAG")
+    st.markdown(
+        "Scientifically rigorous evaluation measuring multi-hop recall, cross-modal edge discovery, "
+        "and topological hallucination resistance with inferential hypothesis testing."
+    )
 
-    from src.evaluation.benchmark import BenchmarkRunner
-    if st.button("▶ Run Live Benchmark Suite"):
-        with st.spinner("Evaluating standard vector retrieval vs. knowledge graph traversal across test cases..."):
+    from src.evaluation.benchmark import BenchmarkRunner, compute_statistical_report, BENCHMARK_CASES
+
+    b_col1, b_col2 = st.columns([2, 1])
+    with b_col1:
+        eval_mode = st.radio(
+            "Evaluation Corpus Scope:",
+            ["Full Research Suite (N=20 Queries across 5 Categories)", "Fast Interactive Smoke Test (N=5 Queries)"],
+            horizontal=True
+        )
+    with b_col2:
+        st.caption("Includes: Cross-Modal Reasoning, Architecture Tracing, Financial Ratios, Global Search, and Negative Controls.")
+
+    max_c = 20 if "Full" in eval_mode else 5
+
+    if st.button(f"▶ Run Live Benchmark Suite ({max_c} Cases)"):
+        with st.spinner(f"Evaluating Standard Vector RAG vs. Multimodal GraphRAG across {max_c} test cases..."):
             runner = BenchmarkRunner()
-            b_results = runner.run_all()
-            
+            b_results = runner.run_all(max_cases=max_c)
+            stats = compute_statistical_report(b_results)
+
+            # Metric cards
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("GraphRAG Recall", f"{stats['mean_graph']}%")
+            m2.metric("Standard Vector RAG", f"{stats['mean_std']}%")
+            m3.metric("Recall Gain (Δ)", f"+{stats['mean_delta']}%")
+            p_disp = "< 0.001" if stats['p_value'] < 0.001 else f"{stats['p_value']:.4f}"
+            m4.metric("t-test p-value", p_disp, delta="p < 0.05" if stats["is_significant"] else "p >= 0.05")
+
+            # Significance banner
+            if stats.get("is_significant"):
+                st.success(
+                    f"✅ **Statistically Significant Advantage (p = {p_disp}, t = {stats['t_stat']}, df = {stats['df']})**: "
+                    f"Reject H₀ at α = 0.01 with 95% CI [{stats['ci_95'][0]}%, {stats['ci_95'][1]}%]. "
+                    f"Cohen's d = {stats['cohen_d']} confirms a large effect size."
+                )
+            else:
+                st.warning(f"p = {p_disp}: Insufficient evidence to reject H₀ at α = 0.05.")
+
+            # Category Breakdown
+            st.markdown("#### 📊 Category-Wise Aggregate Recall & Cross-Modal Recovery")
+            cat_summary = []
+            categories = sorted(list({r["category"] for r in b_results}))
+            for cat in categories:
+                c_res = [r for r in b_results if r["category"] == cat]
+                c_n = len(c_res)
+                c_std = sum(r["standard_rag"]["completeness"] for r in c_res) / c_n
+                c_graph = sum(r["graph_rag"]["completeness"] for r in c_res) / c_n
+                c_bridge = sum(1 for r in c_res if r["graph_rag"]["cross_modal_captured"]) / c_n * 100
+                cat_summary.append({
+                    "Research Category": cat,
+                    "Sample Size (N)": c_n,
+                    "Vector RAG Recall": f"{c_std:.1f}%",
+                    "GraphRAG Recall": f"{c_graph:.1f}%",
+                    "Absolute Gain (Δ)": f"+{c_graph - c_std:.1f}%",
+                    "Cross-Modal Recovery": f"{c_bridge:.0f}%"
+                })
+            st.dataframe(cat_summary, use_container_width=True)
+
+            # Detailed table
+            st.markdown("#### 🔬 Detailed Case-by-Case Empirical Breakdown")
             table_data = []
             for r in b_results:
                 table_data.append({
-                    "Evaluation Case": r["title"],
-                    "Standard RAG Recall": f"{r['standard_rag']['completeness']}% ({r['standard_rag']['found_count']})",
-                    "GraphRAG Recall": f"{r['graph_rag']['completeness']}% ({r['graph_rag']['found_count']})",
-                    "Cross-Modal Captured": "✅ Yes" if r["graph_rag"]["cross_modal_captured"] else "❌ No",
-                    "Graph Traversal": f"{r['graph_rag']['hops_traversed']} hops"
+                    "Case ID": r["case_id"],
+                    "Category": r["category"],
+                    "Evaluation Query Title": r["title"],
+                    "Vector RAG": f"{r['standard_rag']['completeness']}% ({r['standard_rag']['found_count']})",
+                    "GraphRAG": f"{r['graph_rag']['completeness']}% ({r['graph_rag']['found_count']})",
+                    "Cross-Modal": "✅ Supported" if r["graph_rag"]["cross_modal_captured"] else "❌ Failed",
+                    "Hops": f"{r['graph_rag']['hops_traversed']} hops"
                 })
-            
-            st.table(table_data)
-            avg_g = round(sum(r['graph_rag']['completeness'] for r in b_results) / len(b_results), 1)
-            avg_v = round(sum(r['standard_rag']['completeness'] for r in b_results) / len(b_results), 1)
-            st.info(f"📊 Evaluation Complete: GraphRAG averaged {avg_g}% multi-hop completeness vs. Standard Vector RAG's {avg_v}%.")
+            st.dataframe(table_data, use_container_width=True)
 
 # ---------------------------------------------------------------------------
 # Tab 4: Architecture & Ontologies

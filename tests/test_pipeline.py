@@ -153,12 +153,17 @@ def test_hierarchical_community_engine():
 
 
 def test_benchmark_runner():
-    from src.evaluation.benchmark import BenchmarkRunner, BENCHMARK_CASES
+    from src.evaluation.benchmark import BenchmarkRunner, BENCHMARK_CASES, compute_statistical_report
+    assert len(BENCHMARK_CASES) >= 15
     runner = BenchmarkRunner()
     case_res = runner.evaluate_case(BENCHMARK_CASES[0])
 
     assert case_res["graph_rag"]["completeness"] >= case_res["standard_rag"]["completeness"]
     assert case_res["graph_rag"]["cross_modal_captured"] is True
+
+    stats = compute_statistical_report([case_res, case_res])
+    assert stats["n"] == 2
+    assert "p_value" in stats
 
 
 def test_apple_showcase_ingestion():

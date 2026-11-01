@@ -265,12 +265,14 @@ Answer the query grounded strictly on the graph evidence with explicit citations
         lines.append(f"**Classified Intent**: `{intent}` | **Evidence Subgraph**: `{len(entities)}` entities, `{len(relations)}` relations\n")
 
         # 1. Multi-hop traversal paths
+        lines.append("#### Multi-Hop Associative Pathways:")
         if paths:
-            lines.append("#### Multi-Hop Associative Pathways:")
             for p in paths:
                 named_path = [ent_map.get(nid, {}).get("name", nid) for nid in p]
                 lines.append(f"```text\n{' ──▶ '.join(named_path)}\n```")
-            lines.append("")
+        else:
+            lines.append("- *No direct multi-hop bridging path found between query seed entities; topological disconnection confirmed in knowledge graph.*")
+        lines.append("")
 
         # 2. Extract domain findings
         financial_items = [e for e in entities if e.get("entity_type") == "FINANCIAL_METRIC"]
