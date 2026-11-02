@@ -96,7 +96,34 @@ class DiagramASTParser:
         return clean_id, clean_id.replace('_', ' ').title(), "rectangle"
 
     @classmethod
-    def parse(cls, raw_text: str, system_name: str = "Parsed Architecture Topology") -> ArchitectureTopology:
+    def extract_system_name(cls, raw_text: str) -> Optional[str]:
+        """Dynamically extracts architecture system title from diagram comments or markdown headers."""
+        def clean_title(t: str) -> str:
+            t = t.strip()
+            return re.sub(r'\s+(?:Architecture(?:\s+Topology)?|Topology|Diagram)\s*$', '', t, flags=re.I).strip()
+
+        # 1. Mermaid comment title with keywords (e.g. %% NovaCloud Global Payment Platform Architecture Topology)
+        m = re.search(r'%%\s*([A-Za-z0-9\s,\.\'\-\(\)&]+(?:Architecture|Topology|Platform|System|Infrastructure)[A-Za-z0-9\s,\.\'\-\(\)&]*)', raw_text, re.IGNORECASE)
+        if m:
+            return clean_title(m.group(1))
+        # 2. Markdown title # Title
+        m_md = re.search(r'^#\s+([^\n]+)', raw_text, re.MULTILINE)
+        if m_md:
+            return clean_title(m_md.group(1))
+        # 3. Any first comment line
+        m_any = re.search(r'%%\s*([^\n]+)', raw_text)
+        if m_any:
+            candidate = m_any.group(1).strip()
+            if len(candidate) > 4 and not candidate.startswith("{"):
+                return clean_title(candidate)
+        return None
+
+    @classmethod
+    def parse(cls, raw_text: str, system_name: Optional[str] = None) -> ArchitectureTopology:
+        if not system_name or system_name == "Parsed Architecture Topology":
+            detected = cls.extract_system_name(raw_text)
+            system_name = detected or system_name or "Parsed Architecture Topology"
+
         nodes_dict: Dict[str, ASTNode] = {}
         edges: List[ASTEdge] = []
         zones: Set[str] = set()
@@ -254,7 +281,7 @@ class ArchitectureDiagramExtractor:
     def extract_from_text(
         cls,
         raw_text: str,
-        system_name: str = "Parsed Architecture Topology"
+        system_name: Optional[str] = None
     ) -> ArchitectureTopology:
         """
         Parses Mermaid diagrams, Graphviz DOT, or text topology flowcharts into ArchitectureTopology

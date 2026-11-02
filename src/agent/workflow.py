@@ -172,15 +172,32 @@ class GraphRAGAgent:
         intent = state.get("intent", "")
         q_words = set(re.findall(r'[a-zA-Z0-9]+', state["query"].lower()))
 
+        # Non-domain generic linguistic and structural stopwords
+        GENERIC_STOPWORDS = {
+            "the", "a", "an", "and", "or", "to", "for", "with", "from", "in", "on", "of", "at",
+            "by", "this", "that", "these", "those", "is", "are", "was", "were", "be", "been",
+            "it", "its", "into", "over", "down", "under", "between", "how", "what", "which",
+            "where", "when", "who", "why", "can", "could", "should", "would", "do", "does", "did",
+            "sys", "comp", "metric", "entity", "item", "zone", "flow", "tier", "route"
+        }
+
         def is_query_grounded(ent) -> bool:
             if not ent:
                 return False
+            # 1. Informative lexical token overlap (excluding generic grammatical/structural stopwords)
             ent_words = set(re.findall(r'[a-zA-Z0-9]+', ent.name.lower())) | set(re.findall(r'[a-zA-Z0-9]+', ent.id.lower()))
-            common = ent_words.intersection(q_words) - {
-                "the", "and", "for", "with", "from", "down", "sys", "comp", "metric", "cat",
-                "org", "zone", "flow", "tier", "route", "customer", "payments", "cluster"
-            }
-            return len(common) > 0
+            meaningful_overlap = {w for w in (ent_words.intersection(q_words) - GENERIC_STOPWORDS) if len(w) > 2}
+            if meaningful_overlap:
+                return True
+
+            # 2. Dense semantic similarity fallback via vector store
+            try:
+                sim = self.retriever.vector_store.compute_similarity(ent.name, state["query"])
+                if sim >= 0.40:
+                    return True
+            except Exception:
+                pass
+            return False
 
         grounded_seeds = [s for s in seed_ids if is_query_grounded(self.graph_store.get_entity(s))]
 

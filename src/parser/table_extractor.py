@@ -12,16 +12,63 @@ class FinancialTableExtractor:
     """Extracts, normalizes, and computes financial metrics from balance sheets and tables."""
 
     @classmethod
+    def extract_metadata(cls, raw_text: str) -> Tuple[Optional[str], Optional[str]]:
+        """
+        Dynamically extracts corporate entity name and fiscal reporting period
+        from SEC 10-K filings, markdown tables, or document headers.
+        """
+        company_name = None
+        period = None
+
+        # 1. Company Name patterns
+        # Look for bold corporate legal entity names e.g., **NovaCloud Global Inc.** or **Apple Inc.**
+        corp_m = re.search(
+            r'\*\*([A-Z0-9][A-Za-z0-9\s,\.\'\-]+?(?:Inc\.?|Corp\.?|Corporation|LLC|Ltd\.?|Technologies|Holdings|Group|Company))\*\*',
+            raw_text
+        )
+        if corp_m:
+            company_name = corp_m.group(1).strip()
+        else:
+            # Look for registrant charter marker
+            reg_m = re.search(r'\*\*([^\*\n]+)\*\*\s*\n\s*\*\([^\)]*registrant[^\)]*\)\*', raw_text, re.IGNORECASE)
+            if reg_m:
+                company_name = reg_m.group(1).strip()
+
+        # 2. Fiscal Period patterns
+        # e.g., "For the fiscal year ended December 31, 2025" -> FY2025
+        fy_m = re.search(r'fiscal year ended\s+[A-Za-z]+\s+\d{1,2},\s+(\d{4})', raw_text, re.IGNORECASE)
+        if fy_m:
+            period = f"FY{fy_m.group(1)}"
+        else:
+            # e.g., "As of December 31, 2025"
+            asof_m = re.search(r'As of\s+[A-Za-z]+\s+\d{1,2},\s+(\d{4})', raw_text, re.IGNORECASE)
+            if asof_m:
+                period = f"FY{asof_m.group(1)}"
+            else:
+                tag_m = re.search(r'\b(FY\d{4}|Q[1-4]\s*\d{4})\b', raw_text, re.IGNORECASE)
+                if tag_m:
+                    period = tag_m.group(1).upper().replace(" ", "")
+
+        return company_name, period
+
+    @classmethod
     def extract_from_text(
         cls,
         raw_text: str,
-        company_name: str = "Extracted Entity",
-        period: str = "FY2025"
+        company_name: Optional[str] = None,
+        period: Optional[str] = None
     ) -> FinancialStatement:
         """
         Parses raw text, markdown tables, or PDF extractions into a normalized FinancialStatement.
-        Dynamically extracts line items, monetary values, scales, and categories.
+        Dynamically extracts document metadata, line items, monetary values, scales, and categories.
         """
+        # Dynamic metadata extraction if defaults/empty passed
+        auto_company, auto_period = cls.extract_metadata(raw_text)
+        if not company_name or company_name == "Extracted Entity":
+            company_name = auto_company or company_name or "Extracted Entity"
+        if not period or period == "FY2025":
+            period = auto_period or period or "FY2025"
+
         lines = [line.strip() for line in raw_text.splitlines() if line.strip()]
         line_items: List[LineItem] = []
         current_category = "General Assets"
@@ -137,14 +184,34 @@ class FinancialTableExtractor:
                     category=cat
                 ))
 
-        # Correlate and attach footnotes / notes from document body (e.g. Note 4, Note 8)
-        note_sections = re.findall(r'(?:Note\s+\d+|###+\s*Note\s+\d+)[—\-\:\s]+([^\n]+(?:\n[^\n#]+)*)', raw_text, re.IGNORECASE)
-        for note_text in note_sections:
-            note_lower = note_text.lower()
+        # Structured Footnote Parsing: extract note number, title, and body
+        note_matches = re.finditer(
+            r'(?:###+\s*|\b)Note\s+(\d+)\s*[—\-\:\s]+([^\n]+)(?:\n([^\n#]+(?:\n[^\n#]+)*))?',
+            raw_text,
+            re.IGNORECASE
+        )
+        for m in note_matches:
+            note_num = m.group(1)
+            note_title = m.group(2).strip()
+            note_body = (m.group(3) or "").strip()
+            full_note_entry = f"Note {note_num} — {note_title}: {note_body}".strip() if note_body else f"Note {note_num} — {note_title}"
+            
+            title_tokens = set(re.findall(r'[a-zA-Z]{3,}', note_title.lower())) - {"and", "the", "for", "with", "from"}
+
             for item in line_items:
-                keywords = [k for k in item.name.lower().split() if len(k) > 4 and k not in ("total", "other", "under")]
-                if any(kw in note_lower for kw in keywords):
-                    item.footnotes.append(note_text.strip())
+                item_name_lower = item.name.lower()
+                # 1. Explicit footnote citation in the line item name (e.g. [Note 4], (Note 4), Note 4, [4])
+                explicit_cite = bool(re.search(rf'\[Note\s*{note_num}\]|\(Note\s*{note_num}\)|\bNote\s*{note_num}\b|\[{note_num}\]', item_name_lower))
+                
+                # 2. Substantive conceptual alignment between line item and note title
+                item_tokens = set(re.findall(r'[a-zA-Z]{3,}', item_name_lower)) - {"and", "the", "for", "with", "from", "net", "total"}
+                conceptual_overlap = len(item_tokens.intersection(title_tokens)) >= 1 and any(
+                    tok in item_name_lower for tok in ["lease", "commitments", "obligations", "hosting", "cash", "debt", "equity"]
+                )
+
+                if explicit_cite or conceptual_overlap:
+                    if full_note_entry not in item.footnotes:
+                        item.footnotes.append(full_note_entry)
 
         statement = FinancialStatement(
             statement_type="balance_sheet",
@@ -158,9 +225,12 @@ class FinancialTableExtractor:
         cls.compute_ratios(statement)
         return statement
 
-    @staticmethod
-    def compute_ratios(statement: FinancialStatement) -> Dict[str, float]:
-        """Compute key liquidity and leverage ratios from balance sheet line items."""
+    @classmethod
+    def compute_ratios(cls, statement: FinancialStatement) -> Dict[str, float]:
+        """
+        Production Financial Ratio Calculator:
+        Computes standard GAAP/IFRS liquidity, solvency, leverage, and capitalization metrics.
+        """
         # Normalize keys by removing punctuation
         def clean_key(s: str) -> str:
             return re.sub(r'[^a-z0-9]', '', s.lower())
@@ -187,6 +257,7 @@ class FinancialTableExtractor:
         marketable_securities = find_val("marketable securities", "short-term investments") or 0.0
         accounts_receivable = find_val("accounts receivable") or 0.0
 
+        # 1. Liquidity Metrics
         if current_assets is not None and current_liabilities and current_liabilities > 0:
             ratios["current_ratio"] = round(current_assets / current_liabilities, 3)
             ratios["working_capital"] = round(current_assets - current_liabilities, 2)
@@ -195,9 +266,16 @@ class FinancialTableExtractor:
             if cash_and_equiv is not None:
                 quick_assets = cash_and_equiv + marketable_securities + accounts_receivable
                 ratios["quick_ratio"] = round(quick_assets / current_liabilities, 3)
+                ratios["cash_ratio"] = round(cash_and_equiv / current_liabilities, 3)
 
+        # 2. Solvency & Leverage Metrics
         if total_liabilities is not None and stockholders_equity and stockholders_equity > 0:
             ratios["debt_to_equity_ratio"] = round(total_liabilities / stockholders_equity, 3)
+            if total_assets and total_assets > 0:
+                ratios["equity_multiplier"] = round(total_assets / stockholders_equity, 3)
+            total_cap = total_liabilities + stockholders_equity
+            if total_cap > 0:
+                ratios["debt_to_capital_ratio"] = round(total_liabilities / total_cap, 3)
 
         if total_assets is not None and total_liabilities is not None and total_assets > 0:
             ratios["debt_to_assets_ratio"] = round(total_liabilities / total_assets, 3)

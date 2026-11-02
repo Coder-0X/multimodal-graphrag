@@ -532,8 +532,24 @@ class BenchmarkRunner:
                 v_found += 1
         v_completeness = round((v_found / len(required_specs)) * 100, 1)
 
-        # Standard RAG has no structured cross-modal edge synthesis
-        v_cross_modal = False
+        # Empirically evaluate if Standard Vector RAG retrieved cross-modal evidence spanning both domains
+        if case.get("expected_cross_modal"):
+            fin_detected = False
+            infra_detected = False
+            for label, keywords in required_specs:
+                matched = any(k.lower() in v_context for k in keywords)
+                if matched:
+                    lbl = label.lower()
+                    if any(term in lbl for term in ["liability", "obligation", "lease", "operating", "liquidity", "solvency", "financial", "capex", "opex", "commitments"]):
+                        fin_detected = True
+                    elif any(term in lbl for term in ["gateway", "infra", "compute", "database", "cluster", "storage", "edge", "cloudflare", "kong", "service"]):
+                        infra_detected = True
+            # Cross-modal discovery requires retrieving grounded evidence from both domains simultaneously
+            v_cross_modal = bool(fin_detected and infra_detected)
+        elif case.get("is_negative"):
+            v_cross_modal = False
+        else:
+            v_cross_modal = True
 
         # --- Evaluate Multimodal GraphRAG ---
         if case.get("is_global"):

@@ -6,21 +6,63 @@ Replaces static hardcoded links with genuine machine learning-based semantic ass
 """
 from typing import List, Dict, Any, Tuple, Optional
 import re
+import numpy as np
 from .base import BaseGraphStore
 from ..parser.schemas import KGEntity, KGRelation
 from ..retrieval.vector_store import DenseVectorStore
 
 
+CANONICAL_RELATION_PROFILES: Dict[str, str] = {
+    "FUNDS_EDGE_SECURITY": (
+        "Operating expenses and financial commitments funding internet edge security, "
+        "content delivery network CDN, web application firewalls WAF, and ingress API gateway perimeter"
+    ),
+    "HOSTS_DATA_ASSET": (
+        "Capitalized property plant equipment and data center lease assets physically hosting "
+        "or leasing infrastructure for persistent databases, storage clusters, and datastores"
+    ),
+    "FUNDS_STORAGE_TIER": (
+        "Operating expenditure and cloud storage commitments funding persistent database storage, "
+        "stateful replication tiers, caches, and write ahead log streaming"
+    ),
+    "FUNDS_COMPUTE_INFRASTRUCTURE": (
+        "Operating debt obligations and cloud computing commitments funding application microservices, "
+        "Kubernetes compute clusters, container orchestrators, and transaction processing engines"
+    ),
+    "FINANCIALLY_ASSOCIATED_WITH": (
+        "General enterprise financial association and cost allocation linking balance sheet accounts "
+        "and corporate IT infrastructure components"
+    )
+}
+
+RELATION_DESCRIPTIONS: Dict[str, str] = {
+    "FUNDS_EDGE_SECURITY": "Financial commitment funds network security, ingress gateway, and CDN perimeter for",
+    "HOSTS_DATA_ASSET": "Capitalized physical or lease asset provides host infrastructure for",
+    "FUNDS_STORAGE_TIER": "Operating expenditure funds persistent data storage and replication for",
+    "FUNDS_COMPUTE_INFRASTRUCTURE": "Financial obligation allocates compute capacity and microservice elasticity for",
+    "FINANCIALLY_ASSOCIATED_WITH": "Cost center allocation links financial commitment with"
+}
+
+
 class SemanticCrossModalLinker:
     """
     Discovers latent associative edges between financial line items (commitments, leases, costs)
-    and physical cloud infrastructure components (microservices, databases, gateways).
+    and physical cloud infrastructure components (microservices, databases, gateways)
+    using dense embedding cosine similarity and joint semantic relation classification.
     """
 
     def __init__(self, vector_store: DenseVectorStore, similarity_threshold: float = 0.48, top_k_per_entity: int = 2):
         self.vector_store = vector_store
         self.similarity_threshold = similarity_threshold
         self.top_k_per_entity = top_k_per_entity
+        self._profile_keys: List[str] = list(CANONICAL_RELATION_PROFILES.keys())
+        self._profile_embs: Optional[np.ndarray] = None
+        self._init_relation_profiles()
+
+    def _init_relation_profiles(self) -> None:
+        """Pre-compute dense embeddings for canonical relation archetype profiles."""
+        profile_texts = [CANONICAL_RELATION_PROFILES[k] for k in self._profile_keys]
+        self._profile_embs = self.vector_store.embed_texts(profile_texts)
 
     def discover_cross_modal_links(
         self,
@@ -132,36 +174,32 @@ class SemanticCrossModalLinker:
         return discovered_relations
 
     def _infer_relation_type(self, fin: KGEntity, infra: KGEntity, sim: float) -> Tuple[str, str]:
-        f_name = fin.name.lower()
-        i_name = infra.name.lower()
-        comp_type = str(infra.properties.get("component_type", "")).lower()
+        """
+        Dynamically classifies cross-modal relationship type using dense ONNX vector cosine similarity
+        against canonical ontological archetype profiles (zero keyword if-else branches).
+        """
+        if self._profile_embs is None:
+            self._init_relation_profiles()
 
-        # Edge / Perimeter / CDN
-        if comp_type in ("edge", "cdn", "waf", "load_balancer", "gateway") or any(t in i_name for t in ["edge", "cdn", "waf", "perimeter", "frontdoor", "load balancer"]):
-            return (
-                "FUNDS_EDGE_SECURITY",
-                f"Financial line item '{fin.name}' funds network security & CDN perimeter for '{infra.name}'"
-            )
-        # Persistence / Storage / Database
-        elif comp_type in ("database", "storage", "datastore", "cache", "data_store") or any(t in i_name for t in ["database", "storage", "sql", "nosql", "datastore", "persistence", "replica", "cache"]):
-            if "lease" in f_name or "asset" in f_name or "equipment" in f_name or "property" in f_name:
-                return (
-                    "HOSTS_DATA_ASSET",
-                    f"Capitalized asset '{fin.name}' represents physical/lease data infrastructure hosting '{infra.name}'"
-                )
-            else:
-                return (
-                    "FUNDS_STORAGE_TIER",
-                    f"Operating expenditure '{fin.name}' supports storage reliability and replication for '{infra.name}'"
-                )
-        # Compute / Microservice / Orchestration
-        elif comp_type in ("microservice", "service", "compute", "orchestrator", "worker", "cluster") or any(t in i_name for t in ["gateway", "microservice", "orchestrat", "cluster", "service", "worker"]):
-            return (
-                "FUNDS_COMPUTE_INFRASTRUCTURE",
-                f"Obligations in '{fin.name}' allocate compute capacity and elasticity for microservice '{infra.name}'"
-            )
-        else:
-            return (
-                "FINANCIALLY_ASSOCIATED_WITH",
-                f"Associative cost allocation link ({sim:.2f} relevance) between '{fin.name}' and '{infra.name}'"
-            )
+        # Construct joint semantic context representing the cross-domain pair
+        comp_type = str(infra.properties.get("component_type", "")).strip()
+        zone = str(infra.properties.get("zone", "")).strip()
+        infra_desc = infra.description or ""
+        fin_desc = fin.description or ""
+
+        pair_context = (
+            f"Financial line item {fin.name} ({fin_desc}) relates to and funds infrastructure component "
+            f"{infra.name} ({infra_desc}, type: {comp_type}, zone: {zone})"
+        )
+
+        # Dense embedding forward pass for joint pair context
+        pair_emb = self.vector_store.embed_texts([pair_context])  # (1, D)
+
+        # Compute cosine similarity across canonical relation archetypes
+        sims = np.dot(pair_emb, self._profile_embs.T)[0]
+        best_idx = int(np.argmax(sims))
+        best_rel_type = self._profile_keys[best_idx]
+
+        prefix = RELATION_DESCRIPTIONS.get(best_rel_type, "Associated with")
+        desc = f"{prefix} '{infra.name}' ({sim:.2f} dense semantic alignment)"
+        return best_rel_type, desc

@@ -41,12 +41,19 @@ class MultimodalVisionParser:
     def __init__(self, api_key: Optional[str] = None):
         self.api_key = api_key or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY") or os.getenv("OPENAI_API_KEY")
 
-    def parse_balance_sheet(self, source_path_or_content: str = "") -> FinancialStatement:
+    def parse_balance_sheet(
+        self,
+        source_path_or_content: str = "",
+        company_name: Optional[str] = None,
+        period: Optional[str] = None
+    ) -> FinancialStatement:
         """
         Parse financial balance sheet into structured FinancialStatement schema.
         Reads authentic Markdown / PDF files from disk or parses provided text.
+        Dynamically discovers corporate entity name and fiscal reporting period from document metadata.
         """
         content = ""
+        is_default = False
         if source_path_or_content:
             if os.path.exists(source_path_or_content):
                 if source_path_or_content.lower().endswith(".pdf"):
@@ -62,25 +69,32 @@ class MultimodalVisionParser:
             if os.path.exists(default_file):
                 with open(default_file, "r", encoding="utf-8") as f:
                     content = f.read()
+                is_default = True
 
         if content:
             parsed = FinancialTableExtractor.extract_from_text(
                 content,
-                company_name="NovaCloud Global Inc",
-                period="FY2025"
+                company_name=company_name or ("NovaCloud Global Inc" if is_default else None),
+                period=period or ("FY2025" if is_default else None)
             )
             if parsed.line_items:
                 return parsed
 
         raise FileNotFoundError(f"Could not load balance sheet from {source_path_or_content or 'data/novacloud_fy2025_10k.md'}")
 
-    def parse_architecture_diagram(self, source_path_or_content: str = "") -> ArchitectureTopology:
+    def parse_architecture_diagram(
+        self,
+        source_path_or_content: str = "",
+        system_name: Optional[str] = None
+    ) -> ArchitectureTopology:
         """
         Parse architectural diagram into structured ArchitectureTopology schema.
         Extracts components, directional edges, communication protocols, and boundary perimeters
         from Mermaid or text files (data/novacloud_payment_arch.mmd by default).
+        Dynamically discovers system name from diagram headers or comments.
         """
         content = ""
+        is_default = False
         if source_path_or_content:
             if os.path.exists(source_path_or_content):
                 with open(source_path_or_content, "r", encoding="utf-8") as f:
@@ -93,11 +107,12 @@ class MultimodalVisionParser:
             if os.path.exists(default_file):
                 with open(default_file, "r", encoding="utf-8") as f:
                     content = f.read()
+                is_default = True
 
         if content:
             parsed = ArchitectureDiagramExtractor.extract_from_text(
                 content,
-                system_name="NovaCloud Global Payment Platform"
+                system_name=system_name or ("NovaCloud Global Payment Platform" if is_default else None)
             )
             if parsed.nodes:
                 return parsed
