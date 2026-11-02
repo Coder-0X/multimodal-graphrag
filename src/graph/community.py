@@ -105,16 +105,29 @@ class HierarchicalCommunityEngine:
         dominant_type = max(type_counts.items(), key=lambda x: x[1])[0]
         type_label = dominant_type.replace('_', ' ').title()
 
+        # Dynamically discover organization prefixes from graph store to avoid hardcoded brand names
+        org_names = set()
+        if hasattr(self.graph_store, "_entities"):
+            org_names = {
+                e.name for e in self.graph_store._entities.values()
+                if e.entity_type == "ORGANIZATION" and e.name
+            }
+
+        def clean_org_prefix(raw: str) -> str:
+            res = raw.strip()
+            for org in org_names:
+                if len(org) > 2:
+                    res = re.sub(rf'^{re.escape(org)}\s*', '', res, flags=re.I).strip()
+            return res if res else raw.strip()
+
         # Find anchor entity names
         anchor_name = entities[0].name
-        clean_anchor = re.sub(r'^(NovaCloud|Apple Inc|Acme)\s*', '', anchor_name, flags=re.I).strip()
-        if not clean_anchor:
-            clean_anchor = anchor_name
+        clean_anchor = clean_org_prefix(anchor_name)
 
         if len(entities) == 1:
             return f"{clean_anchor} ({type_label})"
         elif len(entities) <= 3:
-            names = [re.sub(r'^(NovaCloud|Apple Inc|Acme)\s*', '', e.name, flags=re.I).strip() for e in entities[:2]]
+            names = [clean_org_prefix(e.name) for e in entities[:2]]
             return f"{' & '.join(names)} ({type_label}s)"
         else:
             return f"{clean_anchor} & Related {type_label}s ({len(entities)} nodes)"

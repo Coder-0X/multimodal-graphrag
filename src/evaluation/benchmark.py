@@ -580,7 +580,10 @@ class BenchmarkRunner:
             g_recognized = has_no_paths and any(k in g_res["final_answer"].lower() for k in neg_keywords)
             g_completeness = 100.0 if (g_recognized or has_no_paths) else 0.0
             
-            v_recognized = any(k in v_context for k in neg_keywords)
+            # Vector RAG absence check: succeeds if top retrieved snippet similarity indicates low relevance (< 0.40)
+            # avoiding false-positive semantic drift over nonexistent concepts
+            top_sim = v_res["retrieved_snippets"][0]["score"] if v_res.get("retrieved_snippets") else 0.0
+            v_recognized = (top_sim < 0.40) or any(k in v_context for k in neg_keywords)
             v_completeness = 100.0 if v_recognized else 0.0
             g_cross_modal = True
             v_found = 1 if v_recognized else 0

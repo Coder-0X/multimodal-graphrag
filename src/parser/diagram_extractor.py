@@ -193,14 +193,14 @@ class DiagramASTParser:
                             name=nlabel,
                             shape=shape,
                             zone=current_zone,
-                            component_type=ArchitectureDiagramExtractor._infer_component_type(nlabel)
+                            component_type=ArchitectureDiagramExtractor._infer_component_type(nlabel, shape=shape)
                         )
                         nodes_dict[nid] = ast_node
                     else:
                         # Update label if token had an explicit shape and name
                         if nlabel != nid.replace('_', ' ').title():
                             nodes_dict[nid].name = nlabel
-                            nodes_dict[nid].component_type = ArchitectureDiagramExtractor._infer_component_type(nlabel)
+                            nodes_dict[nid].component_type = ArchitectureDiagramExtractor._infer_component_type(nlabel, shape=shape)
                             nodes_dict[nid].shape = shape
                     parsed_nodes.append(nodes_dict[nid])
 
@@ -291,15 +291,23 @@ class ArchitectureDiagramExtractor:
 
 
     @staticmethod
-    def _infer_component_type(name: str) -> str:
-        nl = name.lower()
-        if any(w in nl for w in ["database", "db", "postgres", "mysql", "aurora", "datastore", "mongo", "sqlite"]):
+    def _infer_component_type(name: str, shape: str = "rectangle") -> str:
+        # Standard AST node shape conventions (Cylinder = Database, Hexagon = Event/Queue, Parallelogram = I/O)
+        if shape == "cylinder":
             return "database"
-        elif any(w in nl for w in ["gateway", "ingress", "kong", "envoy", "router"]):
+        elif shape in ("hexagon", "hexagon_alt"):
+            return "message_queue"
+        elif shape == "parallelogram":
+            return "data_io"
+
+        nl = name.lower()
+        if any(w in nl for w in ["database", "db", "postgres", "mysql", "aurora", "datastore", "mongo", "sqlite", "persistence", "datastore"]):
+            return "database"
+        elif any(w in nl for w in ["gateway", "ingress", "kong", "envoy", "router", "reverse proxy"]):
             return "api_gateway"
-        elif any(w in nl for w in ["cdn", "waf", "cloudflare", "edge", "front door"]):
+        elif any(w in nl for w in ["cdn", "waf", "cloudflare", "edge", "front door", "anycast"]):
             return "cdn_edge"
-        elif any(w in nl for w in ["queue", "kafka", "rabbit", "pubsub", "sqs", "event"]):
+        elif any(w in nl for w in ["queue", "kafka", "rabbit", "pubsub", "sqs", "event", "broker"]):
             return "message_queue"
         elif any(w in nl for w in ["cache", "redis", "memcached"]):
             return "cache"

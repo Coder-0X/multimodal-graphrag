@@ -284,17 +284,17 @@ with tab_ingest:
 
                         elif file_name.endswith(".mmd") or (file_name.endswith(".txt") and doc_type == "System Architecture Diagram"):
                             text_content = file_bytes.decode("utf-8", errors="replace")
-                            topology = ArchitectureDiagramExtractor.extract_from_text(text_content, system_name=uploaded_file.name)
+                            topology = ArchitectureDiagramExtractor.extract_from_text(text_content)
                             ingest_stats = pipeline.ingest_custom_data(topology=topology)
-                            st.session_state["active_dataset"] = f"Uploaded Architecture: {uploaded_file.name}"
+                            st.session_state["active_dataset"] = f"Architecture: {topology.system_name}"
                             st.success(f"Successfully ingested Architecture! Added {len(topology.nodes)} components.")
                             st.rerun()
 
                         elif file_name.endswith(".md") or (file_name.endswith(".txt") and doc_type == "Financial Balance Sheet"):
                             text_content = file_bytes.decode("utf-8", errors="replace")
-                            statement = FinancialTableExtractor.extract_from_text(text_content, company_name=uploaded_file.name.split('.')[0])
+                            statement = FinancialTableExtractor.extract_from_text(text_content)
                             ingest_stats = pipeline.ingest_custom_data(statement=statement)
-                            st.session_state["active_dataset"] = f"Uploaded 10-K: {uploaded_file.name}"
+                            st.session_state["active_dataset"] = f"10-K: {statement.company_name} ({statement.reporting_period})"
                             st.success(f"Successfully ingested Financial Table! Extracted {len(statement.line_items)} items.")
                             st.rerun()
 
